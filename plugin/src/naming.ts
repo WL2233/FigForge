@@ -14,13 +14,21 @@ export function sanitize(raw: string): string {
   return s.length ? s : 'node';
 }
 
-/** `<root>_<element>@<scale>x.png` — deterministic, dedup-friendly. */
-export function generateFileName(root: string, element: string, scale: number): string {
-  const r = sanitize(root);
-  const e = sanitize(element);
+export function exportName(raw: string, cleanNames = false): string {
+  return cleanNames ? sanitize(raw) : raw;
+}
+
+/** Preserve Unicode and case; replace only characters invalid in file paths. */
+export function fileSafeName(raw: string): string {
+  return raw.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/g, '_') || 'node';
+}
+
+/** `<root>_<element>.png` — export scale is stored in the manifest only. */
+export function generateFileName(root: string, element: string, cleanNames = false): string {
+  const r = fileSafeName(exportName(root, cleanNames));
+  const e = fileSafeName(exportName(element, cleanNames));
   const base = r && e ? `${r}_${e}` : r || e;
-  const scaleTag = Number.isInteger(scale) ? `${scale}` : `${scale}`.replace('.', '_');
-  return `${base}@${scaleTag}x.png`;
+  return `${base}.png`;
 }
 
 // ---------------------------------------------------------------------------

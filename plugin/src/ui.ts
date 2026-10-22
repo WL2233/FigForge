@@ -1,3 +1,4 @@
+import { fileSafeName } from './naming';
 // =============================================================================
 // FigForge — UI thread (iframe)
 // =============================================================================
@@ -396,7 +397,7 @@ function wireChip(id: string) {
     savePrefs({ chips: { ...(readPrefs().chips || {}), [id]: input.checked } });
   });
 }
-['optAutoMerge', 'optGradients', 'optRasterStroke'].forEach(wireChip);
+['optAutoMerge', 'optGradients', 'optRasterStroke', 'optCleanNames'].forEach(wireChip);
 
 // ---------------------------------------------------------------------------
 // Tree rendering
@@ -638,6 +639,7 @@ function readFontFaceDilate(): number {
 
 function currentOptions(): ExportOptions {
   return {
+    cleanNames: ($('#optCleanNames input') as HTMLInputElement).checked,
     autoMerge: ($('#optAutoMerge input') as HTMLInputElement).checked,
     // The "Raster / No Shader" chip IS the no-shader (vanilla) mode now — the separate Vanilla
     // chip is gone. Strokes stay manifest data (rasterizeStrokes:false) so vanilla renders them
@@ -732,7 +734,7 @@ async function downloadProjectBundle(project: { name: string; initial: string },
       screens: [],
     };
     for (const s of screens) {
-      const base = s.name.replace(/[^a-z0-9_-]+/gi, '_') || 'screen';
+      const base = fileSafeName(s.name);
       let folder = base;
       let n = 1;
       while (used.has(folder.toLowerCase())) folder = `${base}_${n++}`;
@@ -746,7 +748,7 @@ async function downloadProjectBundle(project: { name: string; initial: string },
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${(project.name || 'figforge').replace(/[^a-z0-9]+/gi, '_')}_page.zip`;
+    a.download = `${fileSafeName(project.name || 'figforge')}_page.zip`;
     a.click();
     URL.revokeObjectURL(url);
     // Success is only claimed HERE — after the zip blob is handed to the browser.

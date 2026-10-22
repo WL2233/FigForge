@@ -42,7 +42,7 @@ import {
   type Style,
   type TextProps,
 } from './types';
-import { generateFileName, isPassthroughName, sanitize } from './naming';
+import { generateFileName, isPassthroughName, exportName } from './naming';
 import {
   canonicalTagData,
   detectCanonical,
@@ -790,7 +790,7 @@ async function buildCanonical(ref: CanonicalRef | null, node: SceneNode): Promis
 }
 
 /** Figma prototype "Navigate to" reaction → nav data (no behaviour). */
-async function navFor(node: SceneNode): Promise<NavLink | undefined> {
+async function navFor(node: SceneNode, cleanNames: boolean): Promise<NavLink | undefined> {
   const reactions = (node as unknown as { reactions?: any[] }).reactions;
   if (!Array.isArray(reactions)) return undefined;
   for (const r of reactions) {
@@ -802,7 +802,7 @@ async function navFor(node: SceneNode): Promise<NavLink | undefined> {
           // Navigation is click-only by design; no downstream consumer
           // distinguishes Figma trigger types, so the trigger is always 'click'.
           const trig = 'click';
-          return { target: sanitize(dest.name), trigger: trig };
+          return { target: exportName(dest.name, cleanNames), trigger: trig };
         }
       }
     }
@@ -823,6 +823,7 @@ export async function exportDesign(
   unwrapIds: Set<string> = new Set(),
   onProgress?: ProgressFn
 ): Promise<ExportResult> {
+  const nameFor = (raw: string) => exportName(raw, options.cleanNames);
   const frameW = (root as unknown as { width: number }).width;
   const frameH = (root as unknown as { height: number }).height;
   const scaleNum = scaleNumber(scale, frameW, frameH);
@@ -1008,7 +1009,7 @@ export async function exportDesign(
     if ((node as unknown as { visible?: boolean }).visible === false) return;
     if (excludedIds.has(node.id)) return;
 
-    const canonicalRef = await detectCanonical(node);
+    const canonicalRef = await detectCanonical(node, !!options.cleanNames);
     const isMergeRoot =
       !insideMerge &&
       (mergedIds.has(node.id) ||
@@ -1108,7 +1109,7 @@ export async function exportDesign(
   }
 
   for (const p of exportPlans) {
-    onProgress?.(done++, exportPlans.length, sanitize(p.node.name));
+    onProgress?.(done++, exportPlans.length, nameFor(p.node.name));
 
     // Hide exportable descendants so they don't double-render into this PNG.
     // Raster leaves plan no children, so nothing is hidden under a boolean op
@@ -1166,7 +1167,7 @@ export async function exportDesign(
       let file = hashToFile.get(hash);
       const dims = pngSize(bytes);
       if (!file) {
-        file = uniqueAssetName(generateFileName(root.name, p.node.name, scaleNum));
+        file = uniqueAssetName(generateFileName(root.name, p.node.name, options.cleanNames));
         hashToFile.set(hash, file);
         assets.push({ name: file, data: bytes });
         assetEntries.push({ file, nodeId: p.node.id, scale: scaleNum });
@@ -1215,7 +1216,7 @@ export async function exportDesign(
         const dims = pngSize(bytes);
         let file = hashToFile.get(hash);
         if (!file) {
-          file = uniqueAssetName(generateFileName(root.name, `${master.name}_${layerName}`, scaleNum));
+          file = uniqueAssetName(generateFileName(root.name, `${master.name}_${layerName}`, options.cleanNames));
           hashToFile.set(hash, file);
           assets.push({ name: file, data: bytes });
           assetEntries.push({ file, nodeId: layer.id, scale: scaleNum });
@@ -1248,7 +1249,7 @@ export async function exportDesign(
       const dims = pngSize(bytes);
       let file = hashToFile.get(hash);
       if (!file) {
-        file = uniqueAssetName(generateFileName(root.name, nameHint, scaleNum));
+        file = uniqueAssetName(generateFileName(root.name, nameHint, options.cleanNames));
         hashToFile.set(hash, file);
         assets.push({ name: file, data: bytes });
         assetEntries.push({ file, nodeId: node.id, scale: scaleNum });
@@ -1719,7 +1720,7 @@ export async function exportDesign(
       const dims = pngSize(bytes);
       let file = hashToFile.get(hash);
       if (!file) {
-        file = uniqueAssetName(generateFileName(root.name, node.name, scaleNum));
+        file = uniqueAssetName(generateFileName(root.name, node.name, options.cleanNames));
         hashToFile.set(hash, file);
         assets.push({ name: file, data: bytes });
         assetEntries.push({ file, nodeId: node.id, scale: scaleNum });
@@ -1815,7 +1816,7 @@ export async function exportDesign(
 
       elements.push({
         id: node.id,
-        name: sanitize(node.name),
+        name: nameFor(node.name),
         displayName: node.name,
         type: node.type,
         parentId: s.parentId,
@@ -1967,7 +1968,7 @@ export async function exportDesign(
       const raw = child.name.trim();
       const lower = raw.toLowerCase();
       out.push({
-        name: sanitize(raw),
+        name: nameFor(child.name),
         label: firstTextLabel(child) ?? raw,
         primary: /primary|confirm|^ok$|submit|save|delete/.test(lower),
       });
@@ -2915,11 +2916,11 @@ export async function exportDesign(
         appendVariantDiagnostic(variants, `severity from variant ${toastSeverityFromVariant(variants)}`);
       }
     }
-    const nav = await navFor(node);
+    const nav = await navFor(node, options.cleanNames);
 
     const element: ManifestElement = {
       id: node.id,
-      name: sanitize(node.name),
+      name: nameFor(node.name),
       displayName: node.name,
       type: node.type,
       parentId: p.parentId,
@@ -2992,7 +2993,7 @@ export async function exportDesign(
     vanilla: options.vanilla || undefined, // omit the field entirely when off
     screen: {
       id: root.id,
-      name: sanitize(root.name),
+      name: nameFor(root.name),
       displayName: root.name, // original casing — the frame codegen derives the class name from this
       figmaSize: { w: frameW, h: frameH },
       referenceResolution: { w: frameW * scaleNum, h: frameH * scaleNum },

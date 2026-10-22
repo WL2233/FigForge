@@ -3,7 +3,7 @@
 // =============================================================================
 
 import type { CanonicalKind, CanonicalRef, TreeNode } from './types';
-import { sanitize, parseCanonical, isPassthroughName } from './naming';
+import { sanitize, exportName, parseCanonical, isPassthroughName } from './naming';
 
 // Shared plugin data (namespace + key) works without a manifest "id";
 // private get/setPluginData would require one.
@@ -88,14 +88,14 @@ export function canonicalTagData(node: SceneNode): CanonicalTagData {
  *   2. a node carrying the tag itself,
  *   3. the `Btn_<instance>_<ref>` name convention (fallback).
  */
-export async function detectCanonical(node: SceneNode): Promise<CanonicalRef | null> {
+export async function detectCanonical(node: SceneNode, cleanNames = true): Promise<CanonicalRef | null> {
   if (node.type === 'INSTANCE') {
     const mc = await mainComponentOf(node as InstanceNode);
     const tag = mc ? parseTag(mc.getSharedPluginData(PLUGIN_DATA_NS, PLUGIN_DATA_KEY)) : null;
-    if (tag) return { kind: tag.kind, ref: resolveRef(tag.ref, mc), instanceName: sanitize(node.name) };
+    if (tag) return { kind: tag.kind, ref: resolveRef(tag.ref, mc), instanceName: exportName(node.name, cleanNames) };
   }
   const selfTag = parseTag(node.getSharedPluginData(PLUGIN_DATA_NS, PLUGIN_DATA_KEY));
-  if (selfTag) return { kind: selfTag.kind, ref: resolveRef(selfTag.ref, node), instanceName: sanitize(node.name) };
+  if (selfTag) return { kind: selfTag.kind, ref: resolveRef(selfTag.ref, node), instanceName: exportName(node.name, cleanNames) };
   return parseCanonical(node.name);
 }
 

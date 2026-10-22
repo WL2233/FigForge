@@ -15,7 +15,7 @@ import {
 } from './types';
 import { buildTree, canMerge, detectCanonical, isExportable, mainComponentOf } from './traverser';
 import { exportDesign } from './exporter';
-import { sanitize } from './naming';
+import { exportName } from './naming';
 
 const WINDOW_PRESETS: Record<string, { w: number; h: number }> = {
   S: { w: 460, h: 600 },
@@ -261,10 +261,10 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
           try {
             const result = await exportDesign(found[i].node, scale, options, excluded, merged, forcedPng, passthrough);
             screens.push({
-              name: sanitize(found[i].node.name),
+              name: exportName(found[i].node.name, options.cleanNames),
               manifest: JSON.stringify(result.manifest, null, 2),
               assets: result.assets,
-              section: found[i].section,
+              section: found[i].section ? exportName(found[i].section, options.cleanNames) : '',
               role: frameRole(found[i].node),
             });
           } catch (e) {
@@ -492,14 +492,14 @@ function stateRect(name: string, color: RGB, visible: boolean, w: number, h: num
 }
 
 // Collect screen frames on a page — top-level frames AND frames inside Sections,
-// each tagged with its enclosing section name (sanitized; '' if none).
+// each tagged with its enclosing section name (original; '' if none).
 function collectScreens(page: PageNode): { node: SceneNode; section: string }[] {
   const out: { node: SceneNode; section: string }[] = [];
   if (page.name === COMPONENTS_PAGE) return out;
   for (const n of page.children) {
     if ((n as SceneNode).visible === false) continue;
     if (n.type === 'SECTION') {
-      const sec = sanitize(n.name);
+      const sec = n.name;
       for (const c of (n as SectionNode).children) {
         if (c.type === 'FRAME' && (c as SceneNode).visible !== false) {
           out.push({ node: c as SceneNode, section: sec });
