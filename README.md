@@ -27,6 +27,8 @@ The plugin uses JSZip from cdnjs to package downloads. Local bridge connections 
 
 ## Development
 
+Windows：在根目录双击 `check-dependencies.bat` 检查依赖，命令行或自动化可使用 `check-dependencies.bat --no-pause`。缺少 Node.js/npm 或 Node.js 低于 22.6.0 时，通过 winget 安装或更新 Node.js LTS（可能出现系统授权提示）；若 winget 不可用，会提示安装 Windows App Installer 或手动安装 Node.js。插件依赖缺失或版本不匹配时，按锁文件执行 `npm ci`，包含开发依赖；依赖完整时跳过安装。脚本不编译，失败返回非零退出码。Unity 编辑器需自行安装，Unity 包依赖由 Package Manager 在添加 `unity/package.json` 时解析安装。
+
 In `plugin/`, use `npm ci`, `npm run typecheck` and `npm run build` to produce `dist/main.js` and `dist/ui.html`. The Unity package targets Unity 2022.3+; dependencies are declared in `unity/package.json`.
 
 `node scripts/check-canonical-schema.mjs` checks the shared manifest contract without compiling.
