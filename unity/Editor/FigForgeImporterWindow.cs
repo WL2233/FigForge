@@ -42,6 +42,8 @@ namespace FigForge
         ScalePreset _scalePreset = ScalePreset.MatchFigma;
         float _customRefHeight = 1080f;
         bool _disableRaycasts = true;
+        bool _deleteImportsAfterBuild;
+        const string ImportsFolder = "Assets/FigForge/Imports";
         int _warmUpBatchSize = DefaultWarmUpBatchSize;
         int _editorColumns = DefaultEditorColumns;
         string _spriteFolder = "Assets/FigForge/Sprites";
@@ -84,6 +86,7 @@ namespace FigForge
             public ScalePreset scalePreset = ScalePreset.MatchFigma;
             public float customRefHeight = 1080f;
             public bool disableRaycasts = true;
+            public bool deleteImportsAfterBuild;
             public int warmUpBatchSize = DefaultWarmUpBatchSize;
             public int editorColumns = DefaultEditorColumns;
             public string spriteFolder = "Assets/FigForge/Sprites";
@@ -105,6 +108,7 @@ namespace FigForge
                     scalePreset = _scalePreset,
                     customRefHeight = _customRefHeight,
                     disableRaycasts = _disableRaycasts,
+                    deleteImportsAfterBuild = _deleteImportsAfterBuild,
                     warmUpBatchSize = _warmUpBatchSize,
                     editorColumns = _editorColumns,
                     spriteFolder = _spriteFolder,
@@ -141,6 +145,7 @@ namespace FigForge
             _scalePreset = settings.scalePreset;
             _customRefHeight = settings.customRefHeight;
             _disableRaycasts = settings.disableRaycasts;
+            _deleteImportsAfterBuild = settings.deleteImportsAfterBuild;
             _warmUpBatchSize = settings.warmUpBatchSize;
             _editorColumns = settings.editorColumns;
             _spriteFolder = settings.spriteFolder ?? "Assets/FigForge/Sprites";
@@ -457,7 +462,7 @@ namespace FigForge
             var zip = EditorUtility.OpenFilePanel("Select a FigForge export (.zip)", "", "zip");
             if (string.IsNullOrEmpty(zip)) return;
 
-            var dest = $"Assets/FigForge/Imports/{SafeName(Path.GetFileNameWithoutExtension(zip))}";
+            var dest = $"{ImportsFolder}/{SafeName(Path.GetFileNameWithoutExtension(zip))}";
 
             // A prior import into the same folder is merged into, not replaced — same-named
             // files are overwritten but stale assets from the old import linger silently.
@@ -541,8 +546,14 @@ namespace FigForge
         void BuildBar()
         {
             using (new EditorGUILayout.VerticalScope(_styles.buildCard))
+            {
                 if (GUILayout.Button($"Generate Prefab \"{_manifest.screen?.name}\"", _styles.primaryButton, GUILayout.Height(34)))
                     Build();
+                _deleteImportsAfterBuild = EditorGUILayout.ToggleLeft(new GUIContent(
+                    "生成成功后删除导入资源",
+                    "生成成功后删除整个 Assets/FigForge/Imports 文件夹（含其他导入包）；批量生成须全部成功。"),
+                    _deleteImportsAfterBuild, _styles.toggle);
+            }
         }
 
         void PageReferencesSection()
@@ -577,12 +588,17 @@ namespace FigForge
         {
             _log.Clear();
             if (_manifest?.screen == null) return;
-            try { BuildPrefab(_manifest, Path.GetDirectoryName(_manifestPaths[_selected]), ""); }
+            try
+            {
+                var path = BuildPrefab(_manifest, Path.GetDirectoryName(_manifestPaths[_selected]), "");
+                AssetDatabase.SaveAssets();
+                DeleteImportsAfterSuccess(new[] { path });
+            }
             catch (System.Exception ex) { Debug.LogException(ex); Log(ex.Message, MessageType.Error); }
             finally { EditorUtility.ClearProgressBar(); AssetDatabase.SaveAssets(); }
         }
 
-        void BuildPrefab(Manifest manifest, string sourceDir, string section, string role = "screen")
+        string BuildPrefab(Manifest manifest, string sourceDir, string section, string role = "screen")
         {
             FontAutoImporter.ClearCache();
             var folder = $"{_spriteFolder}/{SafeName(manifest.screen.name)}";
@@ -610,6 +626,7 @@ namespace FigForge
                 var saved = PrefabUtility.SaveAsPrefabAsset(page, path);
                 if (saved == null) throw new System.IO.IOException($"Could not save prefab: {path}");
                 Log($"saved prefab → {path}", MessageType.Info);
+                return path;
             }
             finally { UnityEditor.SceneManagement.EditorSceneManager.ClosePreviewScene(scene); }
         }
@@ -706,14 +723,53 @@ namespace FigForge
             foreach (var screen in loaded)
                 if (!names.Add(SafeName(screen.m.screen.name)))
                 { Log("Duplicate prefab filename in page bundle; rename the frames before exporting.", MessageType.Error); return false; }
-            bool ok = true;
+            bool ok = loaded.Count == proj.screens.Count;
+            var prefabPaths = new List<string>();
             foreach (var screen in loaded)
             {
-                try { BuildPrefab(screen.m, screen.srcDir, screen.ps.section, screen.ps.role); }
+                try { prefabPaths.Add(BuildPrefab(screen.m, screen.srcDir, screen.ps.section, screen.ps.role)); }
                 catch (System.Exception ex) { ok = false; Debug.LogException(ex); Log(ex.Message, MessageType.Error); }
             }
             AssetDatabase.SaveAssets();
+            if (ok) DeleteImportsAfterSuccess(prefabPaths.ToArray());
             return ok;
+        }
+
+        static bool IsInsideImports(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            var root = Path.GetFullPath(ImportsFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return full.Equals(root, System.StringComparison.OrdinalIgnoreCase) ||
+                full.StartsWith(root + Path.DirectorySeparatorChar, System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        void DeleteImportsAfterSuccess(string[] prefabPaths)
+        {
+            if (!_deleteImportsAfterBuild || !AssetDatabase.IsValidFolder(ImportsFolder)) return;
+            try
+            {
+                // A configurable output or a manually selected font may still live in Imports.
+                // Include recursive dependencies so deleting sources cannot break the saved prefabs.
+                if (IsInsideImports(_prefabFolder) || IsInsideImports(_spriteFolder) ||
+                    AssetDatabase.GetDependencies(prefabPaths, true).Any(IsInsideImports))
+                {
+                    Log("预制体已生成，但输出目录或资源依赖仍位于 Imports 内，已保留导入资源。", MessageType.Warning);
+                    return;
+                }
+                if (!AssetDatabase.DeleteAsset(ImportsFolder))
+                {
+                    Log("预制体已生成，但删除 Imports 失败，请检查文件占用或权限。", MessageType.Warning);
+                    return;
+                }
+                Log("已删除导入资源：" + ImportsFolder, MessageType.Info);
+                RefreshManifests();
+                Repaint();
+            }
+            catch (System.Exception ex)
+            {
+                Log("预制体已生成，但清理导入资源失败：" + ex.Message, MessageType.Warning);
+            }
         }
 
         float ReferenceHeight(float figmaH)
