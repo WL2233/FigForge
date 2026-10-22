@@ -225,13 +225,13 @@ namespace FigForge
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (GUILayout.Button("Validate Refs"))
+                if (GUILayout.Button("检查引用"))
                 {
                     var reg = frame.GetComponent<FigForgeScreen>();
                     if (Report(Validate(frame, frame.name, reg), frame.name)) PopulateFrame(frame);
                 }
-                if (GUILayout.Button("Populate: This Frame")) Done(PopulateFrame(frame));
-                if (GUILayout.Button("Populate: Whole Page")) Done(PopulatePage(frame));
+                if (GUILayout.Button("填充当前框架引用")) Done(PopulateFrame(frame));
+                if (GUILayout.Button("填充页面引用")) Done(PopulatePage(frame));
             }
         }
 
@@ -240,22 +240,22 @@ namespace FigForge
             var reg = el.GetComponentInParent<FigForgeScreen>(true);
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (GUILayout.Button("Validate Refs"))
+                if (GUILayout.Button("检查引用"))
                 {
                     if (Report(Validate(el, el.name, reg), el.name)) PopulateElement(el, reg);
                 }
-                if (GUILayout.Button("Populate This Group")) Done(PopulateElement(el, reg));
+                if (GUILayout.Button("填充当前分组引用")) Done(PopulateElement(el, reg));
             }
         }
 
         public static void DrawManagerToolbar(UIFrameManager manager)
         {
-            EditorGUILayout.LabelField("FigForge Refs", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("FigForge 引用", EditorStyles.boldLabel);
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (GUILayout.Button("Validate Refs"))
+                if (GUILayout.Button("检查引用"))
                     ValidateManagerRefs(manager);
-                if (GUILayout.Button("Populate Refs"))
+                if (GUILayout.Button("填充引用"))
                     PopulateManagerRefs(manager);
             }
         }

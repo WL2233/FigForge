@@ -51,7 +51,6 @@ namespace FigForge
 
         CanonicalLibrary _canonicalLibrary;
         TextureImportSettings _tex = new TextureImportSettings();
-        AtlasSettings _atlas = new AtlasSettings();
 
         // font mapping: "family|style" → TMP asset
         readonly Dictionary<string, TMP_FontAsset> _fontMap = new Dictionary<string, TMP_FontAsset>();
@@ -60,7 +59,7 @@ namespace FigForge
         // ---- ui state ----
         Vector2 _scroll, _logScroll;
         readonly List<(string msg, MessageType kind)> _log = new List<(string, MessageType)>();
-        bool _showCanvas, _showFonts, _showTextures, _showAtlas, _showCanonical;
+        bool _showCanvas, _showFonts, _showTextures, _showCanonical;
 
         WindowStyles _styles;
 
@@ -95,7 +94,6 @@ namespace FigForge
             public string spriteFolder = "Assets/FigForge/Sprites";
             public string prefabFolder = "Assets/FigForge/Prefabs";
             public TextureImportSettings tex = new TextureImportSettings();
-            public AtlasSettings atlas = new AtlasSettings();
             public string libraryId;
             public Dictionary<string, string> fonts = new Dictionary<string, string>();
         }
@@ -120,7 +118,6 @@ namespace FigForge
                     spriteFolder = _spriteFolder,
                     prefabFolder = _prefabFolder,
                     tex = _tex,
-                    atlas = _atlas,
                     libraryId = ObjectId(_canonicalLibrary),
                     fonts = _fontMap.ToDictionary(pair => pair.Key, pair => ObjectId(pair.Value)),
                 };
@@ -160,7 +157,6 @@ namespace FigForge
             _spriteFolder = settings.spriteFolder ?? "Assets/FigForge/Sprites";
             _prefabFolder = settings.prefabFolder ?? "Assets/FigForge/Prefabs";
             _tex = settings.tex ?? new TextureImportSettings();
-            _atlas = settings.atlas ?? new AtlasSettings();
             _warmUpBatchSize = Mathf.Clamp(_warmUpBatchSize, 1, 8192);
             _editorColumns = Mathf.Clamp(_editorColumns, 1, 50);
             EditorPrefs.SetInt(PrefWarmUpBatchSize, _warmUpBatchSize);
@@ -267,7 +263,6 @@ namespace FigForge
             _showFonts = true;
             _showCanonical = false;
             _showTextures = false;
-            _showAtlas = false;
         }
 
         void RefreshFonts()
@@ -346,9 +341,9 @@ namespace FigForge
                 FontSection();
                 CanonicalSection();
                 TextureSection();
-                AtlasSection();
                 BuildBar();
             }
+            PageReferencesSection();
             LogSection();
 
             EditorGUILayout.EndScrollView();
@@ -585,25 +580,6 @@ namespace FigForge
             }
         }
 
-        void AtlasSection()
-        {
-            using (new EditorGUILayout.VerticalScope(_styles.card))
-            {
-                _showAtlas = Foldout(_showAtlas, "Sprite Atlas");
-                if (!_showAtlas) return;
-                using (new EditorGUI.IndentLevelScope())
-                {
-                    _atlas.create = EditorGUILayout.ToggleLeft("Create sprite atlas", _atlas.create, _styles.toggle);
-                    if (_atlas.create)
-                    {
-                        _atlas.padding = EditorGUILayout.IntField("Padding", _atlas.padding);
-                        _atlas.allowRotation = EditorGUILayout.ToggleLeft("Allow rotation", _atlas.allowRotation, _styles.toggle);
-                        _atlas.includeInBuild = EditorGUILayout.ToggleLeft("Include in build", _atlas.includeInBuild, _styles.toggle);
-                    }
-                }
-            }
-        }
-
         void BuildBar()
         {
             using (new EditorGUILayout.VerticalScope(_styles.buildCard))
@@ -611,6 +587,21 @@ namespace FigForge
                     Build();
         }
 
+        void PageReferencesSection()
+        {
+            using (new EditorGUILayout.VerticalScope(_styles.card))
+            {
+                EditorGUILayout.LabelField("页面引用", _styles.sectionTitle);
+                EditorGUILayout.HelpBox("检查或填充当前场景中已加载页面的控件引用，不批量处理磁盘上的预制体资源。", MessageType.Info);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (GUILayout.Button("检查页面引用", _styles.button))
+                        FigForgeRefTools.ValidateSceneRefs();
+                    if (GUILayout.Button("填充页面引用", _styles.button))
+                        FigForgeRefTools.PopulateSceneRefs();
+                }
+            }
+        }
         void LogSection()
         {
             if (_log.Count == 0) return;
@@ -638,7 +629,6 @@ namespace FigForge
             FontAutoImporter.ClearCache();
             var folder = $"{_spriteFolder}/{SafeName(manifest.screen.name)}";
             var sprites = TextureImportHelper.Import(manifest, sourceDir, folder, _tex);
-            if (_atlas.create) SpriteAtlasHelper.Build(manifest.screen.name, folder, _atlas);
             var scene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
             try
             {
