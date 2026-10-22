@@ -1,5 +1,5 @@
 // =============================================================================
-// FigForge — C# identifier helper for the frame codegen. Turns a designer's Figma
+// FigForge — Identifier helper for imported names and runtime registry keys. Turns a designer's Figma
 // layer name into a valid C# identifier while PRESERVING the original casing and
 // intentional underscores (characters C# cannot use are removed); dedupes
 // names within a scope with _2/_3 suffixes in document order and reports
@@ -84,6 +84,7 @@ namespace FigForge
         }
 
         // ---------------------------------------------------------------------
+        // Preserve legacy registry key deduplication, including removed member names.
         // Reserved accessor names — the inherited (public + protected) members of
         // the runtime base classes a generated accessor identifier must NOT shadow.
         // A frame class is `partial class <Frame> : FigForgeFrame` and a group class
