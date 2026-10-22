@@ -529,7 +529,6 @@ export type ExportScale =
 
 export interface ExportOptions {
   cleanNames: boolean;
-  autoMerge: boolean;
   rasterizeStrokes: boolean; // when false, strokes become manifest data
   emitGradients: boolean;
   emitImageFills: boolean;
@@ -541,14 +540,13 @@ export interface ExportOptions {
   vanilla: boolean;
 }
 
-export const DEFAULT_EXPORT_SCALE: ExportScale = { type: 'scale', value: 2 };
+export const DEFAULT_EXPORT_SCALE: ExportScale = { type: 'scale', value: 1 };
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
   cleanNames: false,
-  autoMerge: true,
   rasterizeStrokes: false,
   emitGradients: true,
   emitImageFills: true,
-  fontFaceDilate: 0.15,
+  fontFaceDilate: 0,
   vanilla: false,
 };
 

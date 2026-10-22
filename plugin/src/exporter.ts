@@ -68,7 +68,7 @@ export interface ExportResult {
 export type ProgressFn = (current: number, total: number, label: string) => void;
 
 const INTERACTIVE_HINTS = ['button', 'btn', 'input', 'field', 'toggle', 'checkbox', 'switch', 'stepper'];
-const DEFAULT_FONT_FACE_DILATE = 0.15;
+const DEFAULT_FONT_FACE_DILATE = 0;
 const OVERSIZED_PNG_MAX_DIMENSION = 2048;
 const OVERSIZED_PNG_MAX_PIXELS = 4096 * 4096;
 const OVERSIZED_PNG_MAX_BYTES = 2 * 1024 * 1024;
@@ -987,7 +987,6 @@ export async function exportDesign(
     if (await detectCanonical(node)) return false;  // canonical controls own their build path
     if (isExportable(node)) return false;           // icon container / bakeable leaf — keep its bake
     if (mergedIds.has(node.id) || forcedPngIds.has(node.id)) return false; // merge/raster win
-    if (options.autoMerge && (node as unknown as { locked?: boolean }).locked === true) return false;
     return unwrapIds.has(node.id) || isPassthroughName(node.name);
   }
 
@@ -1010,10 +1009,7 @@ export async function exportDesign(
     if (excludedIds.has(node.id)) return;
 
     const canonicalRef = await detectCanonical(node, !!options.cleanNames);
-    const isMergeRoot =
-      !insideMerge &&
-      (mergedIds.has(node.id) ||
-        (options.autoMerge && (node as unknown as { locked?: boolean }).locked === true));
+    const isMergeRoot = !insideMerge && mergedIds.has(node.id);
 
     // Inside a merge, descendants are flattened into the merge root's PNG.
     if (insideMerge) return;

@@ -3,15 +3,13 @@ import { fileSafeName } from './naming';
 // FigForge — UI thread (iframe)
 // =============================================================================
 
+import { DEFAULT_EXPORT_OPTIONS } from './types';
 import { AssetBundle } from './asset-bundle';
 import {
-  MANIFEST_VERSION,
-  PROJECT_SCHEMA,
   type BinaryAsset,
   type ElementConfig,
   type ExportOptions,
   type ExportScale,
-  type Project,
   type TreeNode,
 } from './types';
 
@@ -41,8 +39,6 @@ interface UiPrefs {
   controls?: Record<string, string | boolean>;
   scale?: string;
   chips?: Record<string, boolean>;
-  componentsPage?: boolean;
-  fontFaceDilate?: string;
   windowPreset?: string;
   treeFilter?: TreeFilter;
 }
@@ -61,7 +57,6 @@ function captureControls(): Record<string, string | boolean> {
     el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value]));
 }
 document.body.inert = true;
-const DEFAULT_FONT_FACE_DILATE = 0.15;
 const TREE_FILTERS = new Set<TreeFilter>(['all', 'exported', 'hidden', 'merged', 'canonical']);
 const hasTreeFilters = Boolean(document.getElementById('treeFilters'));
 let activeTreeFilter: TreeFilter = hasTreeFilters ? readTreeFilter(readPrefs().treeFilter) : 'all';
@@ -127,260 +122,6 @@ if (savedScale) {
   if ([...scaleEl.options].some((o) => o.value === savedScale)) scaleEl.value = savedScale;
 }
 $('#scale').addEventListener('change', () => savePrefs({ scale: ($('#scale') as HTMLSelectElement).value }));
-const compPageOn = () => {
-  const el = document.getElementById('componentsPageChk') as HTMLInputElement | null;
-  return el ? el.checked : true; // default ON
-};
-const componentsPageChk = document.getElementById('componentsPageChk') as HTMLInputElement | null;
-if (componentsPageChk) {
-  const saved = readPrefs().componentsPage;
-  if (typeof saved === 'boolean') componentsPageChk.checked = saved;
-  componentsPageChk.closest('.chip')?.classList.toggle('on', componentsPageChk.checked);
-  componentsPageChk.addEventListener('change', () => {
-    componentsPageChk.closest('.chip')?.classList.toggle('on', componentsPageChk.checked);
-    savePrefs({ componentsPage: componentsPageChk.checked });
-  });
-}
-const fontDilateEl = document.getElementById('fontFaceDilate') as HTMLInputElement | null;
-if (fontDilateEl) {
-  const saved = readPrefs().fontFaceDilate;
-  if (saved) fontDilateEl.value = saved;
-  fontDilateEl.addEventListener('input', () => savePrefs({ fontFaceDilate: fontDilateEl.value }));
-}
-$('#createBtnBtn').addEventListener('click', () => {
-  setStatus('Creating button component…');
-  post({ type: 'create-button', componentsPage: compPageOn() });
-});
-for (const [id, kind] of [
-  ['createToggleBtn', 'toggle'], ['createRadioBtn', 'radio'],
-  ['createSwitchBtn', 'switch'],
-  ['createInputBtn', 'input'],
-  ['createDropdownBtn', 'dropdown'],
-  ['createToastBtn', 'toast'],
-] as const) {
-  $(`#${id}`).addEventListener('click', () => {
-    setStatus(`Creating ${kind} component…`);
-    post({ type: 'create-canonical', kind, componentsPage: compPageOn() });
-  });
-}
-
-// Floating options popover (＋List, ＋Slider): the chip toggles it, anchored under
-// the chip; closes on outside click or Escape; 'Add …' creates that combination
-// (each combo is its own master). Hide = play the reverse spring (.closing →
-// list-pop-out), THEN set hidden when it ends — keyed by animation name so a
-// reopen mid-close never strands the popover.
-const popoverHiders: (() => void)[] = [];
-function wirePopover(btn: HTMLElement, pop: HTMLElement | null): { hide: () => void } {
-  function hide() {
-    if (!pop || pop.hasAttribute('hidden') || pop.classList.contains('closing')) return;
-    pop.classList.add('closing');
-  }
-  popoverHiders.push(hide);
-  pop?.addEventListener('animationend', (e) => {
-    if ((e as AnimationEvent).animationName !== 'list-pop-out' || !pop) return;
-    pop.classList.remove('closing');
-    pop.setAttribute('hidden', '');
-  });
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (!pop) return;
-    if (!pop.hasAttribute('hidden') && !pop.classList.contains('closing')) { hide(); return; }
-    for (const h of popoverHiders) if (h !== hide) h(); // one popover at a time
-    pop.classList.remove('closing'); // reopening mid-close: cancel the out-animation
-    pop.removeAttribute('hidden');
-    // Anchor below the chip (offsets are relative to .create-group, the positioned
-    // ancestor), clamped so the popover never overflows the group's right edge.
-    const group = pop.offsetParent as HTMLElement | null;
-    const maxLeft = group ? Math.max(0, group.clientWidth - pop.offsetWidth - 4) : 0;
-    pop.style.left = Math.min(btn.offsetLeft, maxLeft) + 'px';
-    pop.style.top = btn.offsetTop + btn.offsetHeight + 6 + 'px';
-  });
-  pop?.addEventListener('click', (e) => e.stopPropagation()); // clicks inside don't close it
-  document.addEventListener('click', hide);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
-  return { hide };
-}
-
-// Stepper variants: horizontal (default) or vertical. Each orientation gets its
-// own master so switching orientation never reuses the other layout.
-const stepperPop = wirePopover($('#createStepperBtn') as HTMLElement, document.getElementById('stepperOpts'));
-function stepperOrientation() {
-  const value = (document.querySelector('input[name="stepperOrientation"]:checked') as HTMLInputElement | null)?.value;
-  return value === 'vertical' ? 'vertical' : 'horizontal';
-}
-$('#stepperOptsCreate').addEventListener('click', () => {
-  const orientation = stepperOrientation();
-  stepperPop.hide();
-  setStatus(`Creating ${orientation} stepper component…`);
-  post({
-    type: 'create-canonical', kind: 'stepper', componentsPage: compPageOn(),
-    stepperOpts: { orientation },
-  });
-});
-
-// List variants: part toggles (header/icons/subtitles) + scrollbar width.
-const listPop = wirePopover($('#createListBtn') as HTMLElement, document.getElementById('listOpts'));
-$('#listOptsCreate').addEventListener('click', () => {
-  const on = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked !== false;
-  const sbRaw = parseInt((document.getElementById('listOptSbWidth') as HTMLInputElement | null)?.value ?? '10', 10);
-  const scrollbarWidth = isNaN(sbRaw) ? 10 : Math.min(40, Math.max(2, sbRaw));
-  listPop.hide();
-  setStatus('Creating list component…');
-  post({
-    type: 'create-canonical', kind: 'list', componentsPage: compPageOn(),
-    listOpts: { header: on('listOptHeader'), icon: on('listOptIcon'), subtitle: on('listOptSubtitle'), scrollbarWidth },
-  });
-});
-
-// Slider variants: custom value range (start/end) and/or slotted snapping (slot
-// count). The Start/End/Slots inputs enable with their checkbox so the defaults
-// (0..1, continuous) stay obvious.
-const sliderPop = wirePopover($('#createSliderBtn') as HTMLElement, document.getElementById('sliderOpts'));
-const sliderChecked = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked === true;
-function syncSliderOptInputs() {
-  const range = sliderChecked('sliderOptRange'), slotted = sliderChecked('sliderOptSlotted');
-  for (const [id, en] of [['sliderOptMin', range], ['sliderOptMax', range], ['sliderOptSlots', slotted]] as const) {
-    const el = document.getElementById(id) as HTMLInputElement | null;
-    if (el) el.disabled = !en;
-  }
-}
-document.getElementById('sliderOptRange')?.addEventListener('change', syncSliderOptInputs);
-document.getElementById('sliderOptSlotted')?.addEventListener('change', syncSliderOptInputs);
-$('#sliderOptsCreate').addEventListener('click', () => {
-  const num = (id: string, def: number) => {
-    const v = parseFloat((document.getElementById(id) as HTMLInputElement | null)?.value ?? '');
-    return isNaN(v) ? def : v;
-  };
-  sliderPop.hide();
-  setStatus('Creating slider component…');
-  post({
-    type: 'create-canonical', kind: 'slider', componentsPage: compPageOn(),
-    sliderOpts: {
-      range: sliderChecked('sliderOptRange'), min: num('sliderOptMin', 0), max: num('sliderOptMax', 100),
-      slotted: sliderChecked('sliderOptSlotted'), slots: Math.round(num('sliderOptSlots', 5)),
-      value: sliderChecked('sliderOptValue'),
-    },
-  });
-});
-
-// Progress variants: style (bar / ring / gauge / segments), indeterminate
-// (animated), and/or a live percentage read-out. The Blocks input enables with
-// the Segments style so the other styles' defaults stay obvious.
-const progressPop = wirePopover($('#createProgressBtn') as HTMLElement, document.getElementById('progressOpts'));
-const progressStyle = () =>
-  (document.querySelector('input[name="progressStyle"]:checked') as HTMLInputElement | null)?.value ?? 'bar';
-function syncProgressOptInputs() {
-  const seg = document.getElementById('progressOptSegments') as HTMLInputElement | null;
-  if (seg) seg.disabled = progressStyle() !== 'segments';
-}
-for (const r of Array.from(document.querySelectorAll('input[name="progressStyle"]'))) {
-  r.addEventListener('change', syncProgressOptInputs);
-}
-$('#progressOptsCreate').addEventListener('click', () => {
-  const on = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked === true;
-  const segRaw = parseInt((document.getElementById('progressOptSegments') as HTMLInputElement | null)?.value ?? '10', 10);
-  progressPop.hide();
-  setStatus('Creating progress component…');
-  post({
-    type: 'create-canonical', kind: 'progress', componentsPage: compPageOn(),
-    progressOpts: {
-      style: progressStyle(),
-      segments: isNaN(segRaw) ? 10 : Math.min(50, Math.max(2, segRaw)),
-      indeterminate: on('progressOptIndet'), value: on('progressOptValue'),
-    },
-  });
-});
-
-// Table variants: rows × columns, header toggle, scrollbar width.
-const tablePop = wirePopover($('#createTableBtn') as HTMLElement, document.getElementById('tableOpts'));
-$('#tableOptsCreate').addEventListener('click', () => {
-  const int = (id: string, def: number, lo: number, hi: number) => {
-    const v = parseInt((document.getElementById(id) as HTMLInputElement | null)?.value ?? '', 10);
-    return isNaN(v) ? def : Math.min(hi, Math.max(lo, v));
-  };
-  tablePop.hide();
-  setStatus('Creating table component…');
-  post({
-    type: 'create-canonical', kind: 'table', componentsPage: compPageOn(),
-    tableOpts: {
-      rows: int('tableOptRows', 4, 1, 100), cols: int('tableOptCols', 3, 1, 12),
-      header: (document.getElementById('tableOptHeader') as HTMLInputElement | null)?.checked !== false,
-      scrollbarWidth: int('tableOptSbWidth', 10, 2, 40),
-    },
-  });
-});
-
-// Screen frame: create a real Figma frame at the selected design size.
-const framePop = wirePopover($('#createFrameBtn') as HTMLElement, document.getElementById('frameOpts'));
-function readFrameSize(id: string, fallback: number, min: number): number {
-  const value = parseInt((document.getElementById(id) as HTMLInputElement | null)?.value ?? '', 10);
-  return Number.isFinite(value) ? Math.min(10000, Math.max(min, value)) : fallback;
-}
-function readFrameName(): string {
-  const value = (document.getElementById('frameOptName') as HTMLInputElement | null)?.value.trim();
-  return value || 'Screen';
-}
-$('#frameOptsCreate').addEventListener('click', () => {
-  const width = readFrameSize('frameOptWidth', 1920, 320);
-  const height = readFrameSize('frameOptHeight', 1080, 240);
-  framePop.hide();
-  setStatus('Creating frame…');
-  post({
-    type: 'create-frame',
-    frameOpts: { name: readFrameName(), width, height },
-  });
-});
-
-// Dialog/Modal: create a full-screen modal canvas with a centered panel.
-const modalPop = wirePopover($('#createModalBtn') as HTMLElement, document.getElementById('modalOpts'));
-function readModalSize(id: string, fallback: number, min: number): number {
-  const value = parseInt((document.getElementById(id) as HTMLInputElement | null)?.value ?? '', 10);
-  return Number.isFinite(value) ? Math.min(10000, Math.max(min, value)) : fallback;
-}
-$('#modalOptsCreate').addEventListener('click', () => {
-  const width = readModalSize('modalOptWidth', 1920, 320);
-  const height = readModalSize('modalOptHeight', 1080, 240);
-  modalPop.hide();
-  setStatus('Creating dialog component…');
-  post({
-    type: 'create-canonical',
-    kind: 'modal',
-    componentsPage: compPageOn(),
-    modalOpts: { width, height },
-  });
-});
-
-// Shell scaffold: Section + persistent Shell + Content slot + sample screens.
-type ShellPlacement = 'left' | 'top' | 'right' | 'bottom';
-const shellPop = wirePopover($('#createShellBtn') as HTMLElement, document.getElementById('shellOpts'));
-function readShellPlacement(id: string, fallback: ShellPlacement): ShellPlacement {
-  const value = (document.getElementById(id) as HTMLSelectElement | null)?.value;
-  return value === 'left' || value === 'top' || value === 'right' || value === 'bottom' ? value : fallback;
-}
-function readShellSize(id: string, fallback: number, min: number): number {
-  const value = parseInt((document.getElementById(id) as HTMLInputElement | null)?.value ?? '', 10);
-  return Number.isFinite(value) ? Math.min(10000, Math.max(min, value)) : fallback;
-}
-function readShellName(): string {
-  const value = (document.getElementById('shellOptName') as HTMLInputElement | null)?.value.trim();
-  return value || 'App Shell';
-}
-$('#shellOptsCreate').addEventListener('click', () => {
-  shellPop.hide();
-  setStatus('Creating shell scaffold…');
-  post({
-    type: 'create-shell',
-    componentsPage: compPageOn(),
-    shellOpts: {
-      name: readShellName(),
-      nav: readShellPlacement('shellOptNav', 'left'),
-      header: readShellPlacement('shellOptHeader', 'top'),
-      width: readShellSize('shellOptWidth', 1920, 320),
-      height: readShellSize('shellOptHeight', 1080, 240),
-    },
-  });
-});
-
 // option chips
 function wireChip(id: string) {
   const el = $(`#${id}`);
@@ -397,7 +138,7 @@ function wireChip(id: string) {
     savePrefs({ chips: { ...(readPrefs().chips || {}), [id]: input.checked } });
   });
 }
-['optAutoMerge', 'optGradients', 'optRasterStroke', 'optCleanNames'].forEach(wireChip);
+['optCleanNames'].forEach(wireChip);
 
 // ---------------------------------------------------------------------------
 // Tree rendering
@@ -630,42 +371,14 @@ function collectConfigs(): ElementConfig[] {
   }));
 }
 
-function readFontFaceDilate(): number {
-  const raw = (document.getElementById('fontFaceDilate') as HTMLInputElement | null)?.value;
-  const value = parseFloat(raw || '');
-  if (!Number.isFinite(value)) return DEFAULT_FONT_FACE_DILATE;
-  return Math.min(1, Math.max(0, value));
-}
-
 function currentOptions(): ExportOptions {
-  return {
-    cleanNames: ($('#optCleanNames input') as HTMLInputElement).checked,
-    autoMerge: ($('#optAutoMerge input') as HTMLInputElement).checked,
-    // The "Raster / No Shader" chip IS the no-shader (vanilla) mode now — the separate Vanilla
-    // chip is gone. Strokes stay manifest data (rasterizeStrokes:false) so vanilla renders them
-    // shader-free from the procedural outline cache; forcing them to raster here would make them
-    // vanish (vanilla bakes no PNG to hold a rasterized stroke).
-    rasterizeStrokes: false,
-    emitGradients: ($('#optGradients input') as HTMLInputElement).checked,
-    emitImageFills: true,
-    fontFaceDilate: readFontFaceDilate(),
-    vanilla: ($('#optRasterStroke input') as HTMLInputElement).checked,
-  };
+  return { ...DEFAULT_EXPORT_OPTIONS, cleanNames: ($('#optCleanNames input') as HTMLInputElement).checked };
 }
 
 $('#exportBtn').addEventListener('click', () => {
   setStatus('Exporting…');
   showProgress(true);
   post({ type: 'export', scale: parseScale(), options: currentOptions(), elementConfigs: collectConfigs() });
-});
-
-$('#exportPageBtn').addEventListener('click', () => {
-  setStatus('Exporting whole page…');
-  showProgress(true);
-  // elementConfigs travel with page exports too — the per-element exclude/merge/
-  // force-PNG choices saved on the elements apply to every frame on the page,
-  // exactly as they would frame-by-frame (main re-applies them before the loop).
-  post({ type: 'export-page', scale: parseScale(), options: currentOptions(), elementConfigs: collectConfigs() });
 });
 
 // JSZip arrives from cdnjs at runtime (a <script> tag in ui.html) — offline or
@@ -682,7 +395,7 @@ function jszipAvailable(): boolean {
 // JSZip global either exists or never will — surface a blocked cdnjs load the
 // moment the UI opens, not at download time.
 if (typeof JSZip === 'undefined') {
-  setStatus('JSZip failed to load from cdnjs (offline / proxy?) — Download Frame/Page will not save bundles.', true);
+  setStatus('JSZip failed to load from cdnjs (offline / proxy?) — Download Frame will not save bundles.', true);
 }
 
 async function downloadBundle(manifestJson: string, assets: BinaryAsset[]) {
@@ -706,55 +419,6 @@ async function downloadBundle(manifestJson: string, assets: BinaryAsset[]) {
     setStatus(`Exported ${images.files.size} unique asset(s). Bundle downloaded.`);
   } catch (e) {
     setStatus(`Bundle packaging failed — ${String((e as Error)?.message || e)}; bundle not saved.`, true);
-  }
-}
-
-interface PageScreen {
-  name: string;
-  manifest: string;
-  assets: BinaryAsset[];
-  section?: string;
-  role?: string;
-}
-async function downloadProjectBundle(project: { name: string; initial: string }, screens: PageScreen[]) {
-  if (!jszipAvailable()) return;
-  try {
-    const zip = new JSZip();
-    const used = new Set<string>(['imgs']);
-    const images = new AssetBundle();
-    zip.folder('Imgs/AltasImgs');
-    zip.folder('Imgs/RawImgs');
-    const index: Project = {
-      schema: PROJECT_SCHEMA,
-      version: MANIFEST_VERSION,
-      generator: 'FigForge',
-      name: project.name,
-      exportedAt: new Date().toISOString(),
-      initial: project.initial,
-      screens: [],
-    };
-    for (const s of screens) {
-      const base = fileSafeName(s.name);
-      let folder = base;
-      let n = 1;
-      while (used.has(folder.toLowerCase())) folder = `${base}_${n++}`;
-      used.add(folder.toLowerCase());
-      zip.file(`${folder}/manifest.json`, await images.manifest(s.manifest, s.assets, '../'));
-      index.screens.push({ name: s.name, manifest: `${folder}/manifest.json`, section: s.section || '', role: s.role || 'screen' });
-    }
-    for (const [path, data] of images.files) zip.file(path, data);
-    zip.file('project.json', JSON.stringify(index, null, 2));
-    const blob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${fileSafeName(project.name || 'figforge')}_page.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
-    // Success is only claimed HERE — after the zip blob is handed to the browser.
-    setStatus(`Exported ${screens.length} screen(s). Project bundle downloaded.`);
-  } catch (e) {
-    setStatus(`Project bundle packaging failed — ${String((e as Error)?.message || e)}; bundle not saved.`, true);
   }
 }
 
@@ -797,10 +461,9 @@ function applySettings(prefs: UiPrefs) {
   workingPrefs = prefs;
   const values = { ...defaultControls, ...prefs.controls };
   // Migrate settings saved by older UI versions.
-  for (const key of ['scale', 'fontFaceDilate'] as const) {
+  for (const key of ['scale'] as const) {
     if (typeof prefs[key] === 'string') values[key] = prefs[key]!;
   }
-  if (typeof prefs.componentsPage === 'boolean') values.componentsPageChk = prefs.componentsPage;
   Object.assign(values, prefs.chips || {});
   for (const el of settingsControls) {
     const value = values[controlKey(el)];
@@ -811,8 +474,6 @@ function applySettings(prefs: UiPrefs) {
       if (!(el instanceof HTMLSelectElement) || Array.from(el.options).some((o) => o.value === value)) el.value = value;
     }
   }
-  syncSliderOptInputs();
-  syncProgressOptInputs();
   activeTreeFilter = readTreeFilter(prefs.treeFilter);
   renderTree();
   lastPreset = prefs.windowPreset === 'S' || prefs.windowPreset === 'L' ? prefs.windowPreset : 'M';
@@ -910,13 +571,6 @@ window.onmessage = (event: MessageEvent) => {
       showProgress(false);
       setProgress(0);
       downloadBundle(msg.manifest, msg.assets);
-
-      break;
-
-    case 'export-page-complete':
-      showProgress(false);
-      setProgress(0);
-      downloadProjectBundle(msg.project, msg.screens);
 
       break;
 

@@ -125,114 +125,6 @@
   .chip.on { color: var(--text); border-color: var(--brand); background: var(--brand-soft); }
   button.chip { border-color: var(--border); }
   button.chip:hover, .chip:hover { color: var(--text); background: var(--bg-hover); }
-  .create-area {
-    display: grid; grid-template-columns: 1fr; gap: 8px;
-    padding: 8px 10px; border-bottom: 1px solid var(--border);
-    background: var(--bg-secondary);
-  }
-  .create-group {
-    min-width: 0; position: relative; /* anchor for the List variants popover */
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 8px;
-  }
-  .create-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    margin-bottom: 6px;
-  }
-  .create-grid {
-    display: grid; grid-template-columns: repeat(7, minmax(48px, 1fr)); gap: 5px;
-  }
-  .create-grid .chip {
-    justify-content: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    padding-left: 6px; padding-right: 6px;
-  }
-  .create-grid .component-chip {
-    flex-direction: column; gap: 2px; min-height: 42px; line-height: 1;
-    padding-top: 5px; padding-bottom: 5px;
-    background: var(--panel-soft);
-  }
-  .component-chip .chip-icon {
-    width: 17px; height: 17px; display: inline-grid; place-items: center;
-    border: 1px solid color-mix(in srgb, currentColor 50%, transparent);
-    border-radius: 4px; color: var(--text);
-    font-size: 10px; font-weight: 700; line-height: 1;
-  }
-  .component-chip:hover .chip-icon { color: #fff; border-color: var(--brand); background: var(--brand-soft); }
-  .component-chip .chip-label {
-    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .create-settings {
-    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-start;
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 7px 8px;
-  }
-  .font-chip input {
-    width: 54px; background: transparent; border: none; color: inherit; padding: 0; min-height: 16px;
-  }
-  .font-chip input { width: 42px; }
-  .font-chip input:focus { outline: none; }
-
-  /* ---- List variants popover (floats under the ＋List chip) ---- */
-  .list-pop {
-    position: absolute; z-index: 60; min-width: 168px;
-    background: var(--panel-soft);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    box-shadow: 0 1px 2px rgba(0,0,0,.25), 0 10px 28px rgba(0,0,0,.45);
-    padding: 8px;
-    display: flex; flex-direction: column; gap: 2px;
-    transform-origin: 18px -6px; /* spring from the anchor chip */
-    animation: list-pop-in .34s cubic-bezier(.34, 1.3, .5, 1) both;
-  }
-  /* Springy entrance: overshoot, settle back, tiny rotational wobble. */
-  @keyframes list-pop-in {
-    0%   { opacity: 0; transform: scale(.55) translateY(-10px); }
-    45%  { opacity: 1; transform: scale(1.06) translateY(2px) rotate(.4deg); }
-    65%  { transform: scale(.97) translateY(-1px) rotate(-.35deg); }
-    82%  { transform: scale(1.015) rotate(.2deg); }
-    100% { opacity: 1; transform: none; }
-  }
-  /* Reverse on close: a little anticipation wobble, then shrink + fade away. */
-  @keyframes list-pop-out {
-    0%   { opacity: 1; transform: none; }
-    25%  { transform: scale(1.05) translateY(1px) rotate(.35deg); }
-    100% { opacity: 0; transform: scale(.55) translateY(-10px); }
-  }
-  .list-pop.closing { animation: list-pop-out .22s cubic-bezier(.55, 0, .8, .4) both; pointer-events: none; }
-  .list-pop[hidden] { display: none; }
-  .list-pop-title {
-    font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
-    color: var(--text-tertiary); padding: 2px 4px 6px;
-  }
-  .list-pop-row {
-    display: flex; align-items: center; gap: 8px; cursor: pointer;
-    padding: 5px 6px; border-radius: var(--radius-sm); color: var(--text-secondary);
-  }
-  .list-pop-row:hover { background: var(--bg-hover); color: var(--text); }
-  .list-pop-row input { accent-color: var(--brand); margin: 0; }
-  .list-pop-row span { flex: 1; }
-  .list-pop-row input[type="number"] {
-    /* Wide enough for real values ('100', '-12.5') — 40px clipped past ~2 digits. */
-    width: 64px; background: var(--bg); border: 1px solid var(--border);
-    border-radius: 4px; color: var(--text); padding: 1px 4px; min-height: 16px;
-  }
-  .list-pop-row input[type="text"] {
-    width: 108px; background: var(--bg); border: 1px solid var(--border);
-    border-radius: 4px; color: var(--text); padding: 2px 5px; min-height: 20px;
-  }
-  .list-pop-row select {
-    width: 88px; background: var(--bg); border: 1px solid var(--border);
-    border-radius: 4px; color: var(--text); padding: 2px 5px; min-height: 20px;
-  }
-  .list-pop-row input[type="number"]:focus { outline: none; border-color: var(--brand); }
-  .list-pop-row input[type="text"]:focus { outline: none; border-color: var(--brand); }
-  .list-pop-row select:focus { outline: none; border-color: var(--brand); }
-  .list-pop-create {
-    margin-top: 8px; padding: 6px 10px; cursor: pointer;
-    background: var(--brand-strong); color: #fff; font-weight: 600;
-    border: none; border-radius: var(--radius-sm);
-  }
-  .list-pop-create:hover { background: var(--brand); }
 
   /* ---- split ---- */
   .split { flex: 1; display: flex; overflow: hidden; }
@@ -370,9 +262,6 @@
   .btn-ghost:hover:not(:disabled) { background: var(--bg-hover); }
 
   @media (max-width: 520px) {
-    .create-area { grid-template-columns: 1fr; }
-    .create-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .create-settings { justify-content: flex-start; align-items: center; }
     .export-actions { min-width: 0; }
     .tree-filter-row { align-items: stretch; flex-direction: column; gap: 4px; }
   }
@@ -416,9 +305,9 @@
         <span class="toolbar-label">Export</span>
         <select id="scale" title="Export scale">
           <option value="s:0.5">0.5×</option>
-          <option value="s:1">1×</option>
+          <option value="s:1" selected>1×</option>
           <option value="s:1.5">1.5×</option>
-          <option value="s:2" selected>2×</option>
+          <option value="s:2">2×</option>
           <option value="s:3">3×</option>
           <option value="s:4">4×</option>
           <option value="w:512">512w</option>
@@ -426,9 +315,6 @@
           <option value="h:1024">1024h</option>
         </select>
         <label class="chip" id="optCleanNames" title="勾选后清洗导出名称；默认保留原名（含中文）"><input type="checkbox" /> 命名清洗</label>
-        <label class="chip on" id="optAutoMerge"><input type="checkbox" checked /> Auto-merge</label>
-        <label class="chip on" id="optGradients"><input type="checkbox" checked /> Gradients</label>
-        <label class="chip on" id="optRasterStroke" title="Raster / No Shader: no shaders, no compositor, no effects/blends — corners, strokes and gradients render shader-free from procedural sprite caches; images bake to flat sprites. Controls stay interactive; text stays TextMeshPro. For low-end / locked-down targets."><input type="checkbox" checked /> Raster / No Shader</label>
         <div class="spacer"></div>
         <button class="icon-btn" id="reloadBtn" title="Rescan selection">⟳</button>
       </div>
@@ -436,116 +322,6 @@
       <div class="toolbar">
         <button class="chip" id="resetSettingsBtn">Reset</button>
         <button class="chip" id="saveSettingsBtn">Apply</button>
-      </div>
-
-      <div class="create-area">
-        <div class="create-group">
-          <div class="create-head">
-            <span class="toolbar-label">Create canonical</span>
-          </div>
-          <div class="create-grid">
-            <button class="chip component-chip" id="createBtnBtn" title="Create a canonical Button component on the FigForge Components page"><span class="chip-icon" aria-hidden="true">▭</span><span class="chip-label">Button</span></button>
-            <button class="chip component-chip" id="createToggleBtn" title="Create a canonical Toggle (on/off switch) component"><span class="chip-icon" aria-hidden="true">☑</span><span class="chip-label">Toggle</span></button>
-            <button class="chip component-chip" id="createSwitchBtn" title="Create a canonical iOS-style Switch component"><span class="chip-icon" aria-hidden="true">◐</span><span class="chip-label">Switch</span></button>
-            <button class="chip component-chip" id="createRadioBtn" title="Create a canonical Radio button component (group related radios under one frame/group)"><span class="chip-icon" aria-hidden="true">◉</span><span class="chip-label">Radio</span></button>
-            <button class="chip component-chip" id="createInputBtn" title="Create a canonical InputField component"><span class="chip-icon" aria-hidden="true">T</span><span class="chip-label">Input</span></button>
-            <button class="chip component-chip" id="createStepperBtn" title="Create a canonical numeric Stepper component — click to pick horizontal or vertical"><span class="chip-icon" aria-hidden="true">±</span><span class="chip-label">Stepper</span></button>
-            <button class="chip component-chip" id="createDropdownBtn" title="Create a canonical Dropdown component"><span class="chip-icon" aria-hidden="true">▾</span><span class="chip-label">Dropdown</span></button>
-            <button class="chip component-chip" id="createSliderBtn" title="Create a canonical Slider component — resize the master's Fill width to set the initial value"><span class="chip-icon" aria-hidden="true">━</span><span class="chip-label">Slider</span></button>
-            <button class="chip component-chip" id="createProgressBtn" title="Create a canonical Progress bar component — a Slider with no thumb and no input; resize the master's Fill width to set the initial value"><span class="chip-icon" aria-hidden="true">◔</span><span class="chip-label">Progress</span></button>
-            <button class="chip component-chip" id="createListBtn" title="Create a canonical scrollable List component — click to pick which parts the list has"><span class="chip-icon" aria-hidden="true">☰</span><span class="chip-label">List</span></button>
-            <button class="chip component-chip" id="createTableBtn" title="Create a canonical scrollable Table component — click to pick rows × columns"><span class="chip-icon" aria-hidden="true">▦</span><span class="chip-label">Table</span></button>
-            <button class="chip component-chip" id="createModalBtn" title="Create a Dialog (backdrop, panel, title, body, actions, close). Auto-added to a global 'Dialogs' layer — rename the instance to get a typed Dialogs.<Name> accessor in Unity"><span class="chip-icon" aria-hidden="true">□</span><span class="chip-label">Dialog</span></button>
-            <button class="chip component-chip" id="createToastBtn" title="Create a canonical Toast host/template component for Toasts.Success(...) and related runtime calls"><span class="chip-icon" aria-hidden="true">!</span><span class="chip-label">Toast</span></button>
-            <button class="chip component-chip" id="createFrameBtn" title="Create a screen frame with a chosen width and height"><span class="chip-icon" aria-hidden="true">▣</span><span class="chip-label">Frame</span></button>
-            <button class="chip component-chip" id="createShellBtn" title="Create a Section with Shell, Content slot, four sample screens, and nav buttons"><span class="chip-icon" aria-hidden="true">⌂</span><span class="chip-label">Shell</span></button>
-          </div>
-          <!-- Stepper options popover — floats under the ＋Stepper chip; orientations
-               become separate masters (Stepper, Stepper Vertical). -->
-          <div class="list-pop" id="stepperOpts" hidden>
-            <div class="list-pop-title">Stepper options</div>
-            <label class="list-pop-row" title="Minus, value, and plus arranged left-to-right"><input type="radio" name="stepperOrientation" id="stepperOptHorizontal" value="horizontal" checked /><span>Horizontal</span></label>
-            <label class="list-pop-row" title="Plus, value, and minus arranged top-to-bottom"><input type="radio" name="stepperOrientation" id="stepperOptVertical" value="vertical" /><span>Vertical</span></label>
-            <button class="list-pop-create" id="stepperOptsCreate" title="Create this Stepper variant">＋ Add Stepper</button>
-          </div>
-          <!-- List variants popover — floats under the ＋List chip; combinations become
-               separate masters (List, List NoHeader, List NoIcon NoSubtitle, …). -->
-          <div class="list-pop" id="listOpts" hidden>
-            <div class="list-pop-title">List parts</div>
-            <label class="list-pop-row" title="Include the section title strip pinned above the rows"><input type="checkbox" id="listOptHeader" checked /><span>Header section</span></label>
-            <label class="list-pop-row" title="Rows include a leading icon slot"><input type="checkbox" id="listOptIcon" checked /><span>Row icons</span></label>
-            <label class="list-pop-row" title="Rows include a second line under the title"><input type="checkbox" id="listOptSubtitle" checked /><span>Row subtitles</span></label>
-            <label class="list-pop-row" title="Scrollbar thickness in px (non-default widths become their own master, e.g. 'List SB14')"><span>Scrollbar width</span><input type="number" id="listOptSbWidth" value="10" min="2" max="40" /></label>
-            <button class="list-pop-create" id="listOptsCreate" title="Create this List variant">＋ Add List</button>
-          </div>
-          <!-- Slider options popover — floats under the ＋Slider chip; configurations
-               become separate masters (Slider, Slider 0to100, Slider 0to100 S5, …). -->
-          <div class="list-pop" id="sliderOpts" hidden>
-            <div class="list-pop-title">Slider options</div>
-            <label class="list-pop-row" title="Custom value range (off = 0..1)"><input type="checkbox" id="sliderOptRange" /><span>Value range</span></label>
-            <label class="list-pop-row" title="Range start value"><span>Start</span><input type="number" id="sliderOptMin" value="0" step="any" disabled /></label>
-            <label class="list-pop-row" title="Range end value"><span>End</span><input type="number" id="sliderOptMax" value="100" step="any" disabled /></label>
-            <label class="list-pop-row" title="Snap to evenly spaced slots (tick marks on the track)"><input type="checkbox" id="sliderOptSlotted" /><span>Slotted</span></label>
-            <label class="list-pop-row" title="Number of slots (tick positions) across the range, including both ends"><span>Slots</span><input type="number" id="sliderOptSlots" value="5" min="2" max="100" disabled /></label>
-            <label class="list-pop-row" title="Show a live read-out of the current value, right of the label"><input type="checkbox" id="sliderOptValue" /><span>Show value</span></label>
-            <button class="list-pop-create" id="sliderOptsCreate" title="Create this Slider variant">＋ Add Slider</button>
-          </div>
-          <!-- Progress options popover — floats under the ＋Progress chip; configurations
-               become separate masters (Progress, Progress Ring Indet, Progress Seg10 V, …). -->
-          <div class="list-pop" id="progressOpts" hidden>
-            <div class="list-pop-title">Progress options</div>
-            <label class="list-pop-row" title="Horizontal rail with a value-driven fill"><input type="radio" name="progressStyle" id="progressStyleBar" value="bar" checked /><span>Bar</span></label>
-            <label class="list-pop-row" title="Radial donut — the fill arc sweeps clockwise from 12 o'clock"><input type="radio" name="progressStyle" id="progressStyleRing" value="ring" /><span>Ring</span></label>
-            <label class="list-pop-row" title="270° dial with the gap at the bottom — a speedometer-style ring"><input type="radio" name="progressStyle" id="progressStyleGauge" value="gauge" /><span>Gauge</span></label>
-            <label class="list-pop-row" title="Discrete blocks that light up left-to-right (battery / step indicator)"><input type="radio" name="progressStyle" id="progressStyleSegments" value="segments" /><span>Segments</span></label>
-            <label class="list-pop-row" title="Number of blocks (Segments style)"><span>Blocks</span><input type="number" id="progressOptSegments" value="10" min="2" max="50" disabled /></label>
-            <label class="list-pop-row" title="Animated mode for work of unknown duration — bar sweeps, ring/gauge spins, segments scan. Adds a hidden 'Indeterminate' layer to the master (delete the layer to make it value-driven again)"><input type="checkbox" id="progressOptIndet" /><span>Indeterminate</span></label>
-            <label class="list-pop-row" title="Show a live percentage read-out — right of the label (bar/segments) or centered in the dial (ring/gauge)"><input type="checkbox" id="progressOptValue" /><span>Show value</span></label>
-            <button class="list-pop-create" id="progressOptsCreate" title="Create this Progress variant">＋ Add Progress</button>
-          </div>
-          <!-- Table options popover — floats under the ＋Table chip; configurations
-               become separate masters (Table, Table 6x4, Table 6x4 NoHeader, …). -->
-          <div class="list-pop" id="tableOpts" hidden>
-            <div class="list-pop-title">Table options</div>
-            <label class="list-pop-row" title="Number of data rows placed in the master (each row's cell texts export as the table data)"><span>Rows</span><input type="number" id="tableOptRows" value="4" min="1" max="100" /></label>
-            <label class="list-pop-row" title="Number of columns (cells per row; columns share the width equally — resize a cell in the TableRow master to size a column)"><span>Columns</span><input type="number" id="tableOptCols" value="3" min="1" max="12" /></label>
-            <label class="list-pop-row" title="Include the column-title strip pinned above the scrolling rows"><input type="checkbox" id="tableOptHeader" checked /><span>Header row</span></label>
-            <label class="list-pop-row" title="Scrollbar thickness in px (non-default widths become their own master, e.g. 'Table SB14')"><span>Scrollbar width</span><input type="number" id="tableOptSbWidth" value="10" min="2" max="40" /></label>
-            <button class="list-pop-create" id="tableOptsCreate" title="Create this Table variant">＋ Add Table</button>
-          </div>
-          <!-- Frame popover — creates a real Figma screen frame at the chosen size.
-               Export then uses that frame's actual dimensions. -->
-          <div class="list-pop" id="frameOpts" hidden>
-            <div class="list-pop-title">Frame layout</div>
-            <label class="list-pop-row" title="Generated frame name"><span>Name</span><input type="text" id="frameOptName" value="Screen" /></label>
-            <label class="list-pop-row" title="Generated frame width in Figma pixels"><span>Width</span><input type="number" id="frameOptWidth" value="1920" min="320" max="10000" /></label>
-            <label class="list-pop-row" title="Generated frame height in Figma pixels"><span>Height</span><input type="number" id="frameOptHeight" value="1080" min="240" max="10000" /></label>
-            <button class="list-pop-create" id="frameOptsCreate" title="Create this frame">＋ Add Frame</button>
-          </div>
-          <!-- Dialog popover — creates/resizes the actual modal component canvas.
-               The backdrop fills this size; the dialog panel remains centered. -->
-          <div class="list-pop" id="modalOpts" hidden>
-            <div class="list-pop-title">Dialog layout</div>
-            <label class="list-pop-row" title="Dialog/backdrop width in Figma pixels"><span>Width</span><input type="number" id="modalOptWidth" value="1920" min="320" max="10000" /></label>
-            <label class="list-pop-row" title="Dialog/backdrop height in Figma pixels"><span>Height</span><input type="number" id="modalOptHeight" value="1080" min="240" max="10000" /></label>
-            <button class="list-pop-create" id="modalOptsCreate" title="Create this Dialog component">＋ Add Dialog</button>
-          </div>
-          <!-- Shell scaffold popover — creates a page Section containing a persistent
-               Shell frame, a Content mount slot, four sample screens, and nav buttons. -->
-          <div class="list-pop" id="shellOpts" hidden>
-            <div class="list-pop-title">Shell layout</div>
-            <label class="list-pop-row" title="Section and Shell frame name"><span>Shell name</span><input type="text" id="shellOptName" value="App Shell" /></label>
-            <label class="list-pop-row" title="Generated Shell frame width in Figma pixels"><span>Width</span><input type="number" id="shellOptWidth" value="1920" min="320" max="10000" /></label>
-            <label class="list-pop-row" title="Generated Shell frame height in Figma pixels"><span>Height</span><input type="number" id="shellOptHeight" value="1080" min="240" max="10000" /></label>
-            <label class="list-pop-row" title="Where the four sample nav buttons are placed in the Shell"><span>Menu</span><select id="shellOptNav"><option value="left" selected>Left</option><option value="top">Top</option><option value="right">Right</option><option value="bottom">Bottom</option></select></label>
-            <label class="list-pop-row" title="Where the sample header strip is placed in the Shell"><span>Header</span><select id="shellOptHeader"><option value="top" selected>Top</option><option value="left">Left</option><option value="right">Right</option><option value="bottom">Bottom</option></select></label>
-            <button class="list-pop-create" id="shellOptsCreate" title="Create this Shell scaffold">＋ Add Shell</button>
-          </div>
-        </div>
-        <div class="create-settings">
-          <label class="chip" title="ON: masters live on a dedicated FigForge Components page. OFF: masters are parked on your current page."><input type="checkbox" id="componentsPageChk" checked />Components page</label>
-          <label class="chip font-chip" title="TextMeshPro SDF face dilate used by generated Unity font assets">Dilate <input type="number" id="fontFaceDilate" value="0.15" min="0" max="1" step="0.01" /></label>
-        </div>
       </div>
 
       <div class="split">
@@ -593,7 +369,6 @@
           </div>
           <div class="export-actions">
             <button class="btn-ghost" id="exportBtn" disabled>Download Frame</button>
-            <button class="btn-ghost" id="exportPageBtn" title="Export every top-level frame on this page as a project bundle (.zip)">Download Page</button>
           </div>
         </div>
       </footer>
