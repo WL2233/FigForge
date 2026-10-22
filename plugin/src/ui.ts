@@ -12,7 +12,6 @@ import {
   type Project,
   type TreeNode,
 } from './types';
-import { bytesToBase64 } from './base64';
 
 declare const JSZip: any;
 declare const __FIGFORGE_VERSION__: string; // injected by esbuild from package.json
@@ -41,12 +40,8 @@ interface UiPrefs {
   scale?: string;
   chips?: Record<string, boolean>;
   componentsPage?: boolean;
-  unityPort?: string;
-  unityToken?: string;
-  bridgeToken?: string;
   fontFaceDilate?: string;
   windowPreset?: string;
-  mcpDesired?: boolean;
   treeFilter?: TreeFilter;
 }
 
@@ -142,48 +137,6 @@ if (componentsPageChk) {
   componentsPageChk.addEventListener('change', () => {
     componentsPageChk.closest('.chip')?.classList.toggle('on', componentsPageChk.checked);
     savePrefs({ componentsPage: componentsPageChk.checked });
-  });
-}
-const unityPortEl = document.getElementById('unityPort') as HTMLInputElement | null;
-if (unityPortEl) {
-  const saved = readPrefs().unityPort;
-  if (saved) unityPortEl.value = saved;
-  unityPortEl.addEventListener('input', () => savePrefs({ unityPort: unityPortEl.value }));
-}
-const unityTokenEl = document.getElementById('unityToken') as HTMLInputElement | null;
-if (unityTokenEl) {
-  const el = unityTokenEl;
-  const saved = readPrefs().unityToken;
-  if (saved) el.value = saved;
-  const looksLikeToken = (s: string) => /^[0-9a-f]{32}$/i.test(s);
-  const applyToken = (raw: string) => {
-    const t = raw.trim();
-    el.value = t;
-    savePrefs({ unityToken: t });
-    if (looksLikeToken(t)) setStatus('Live-import token set.');
-  };
-  el.addEventListener('input', () => savePrefs({ unityToken: el.value.trim() }));
-  // Reliable path: a real ⌘/Ctrl-V paste. Figma's plugin sandbox delivers clipboard
-  // data on an actual paste keystroke (unlike navigator.clipboard.readText, which it
-  // blocks). When the pasted text is a token we own the update so it lands clean.
-  el.addEventListener('paste', (e) => {
-    const text = e.clipboardData?.getData('text');
-    if (text && looksLikeToken(text.trim())) {
-      e.preventDefault();
-      applyToken(text);
-      el.select();
-    }
-  });
-  // Bonus: hosts that DO grant clipboard-read (e.g. a browser preview) auto-fill on
-  // click. Figma blocks this, so it silently no-ops there — paste with ⌘V instead.
-  el.addEventListener('focus', async () => {
-    el.select();
-    try {
-      const clip = (await navigator.clipboard?.readText())?.trim();
-      if (clip && looksLikeToken(clip) && clip !== el.value.trim()) applyToken(clip);
-    } catch {
-      // clipboard read blocked by the sandbox — use ⌘V.
-    }
   });
 }
 const fontDilateEl = document.getElementById('fontFaceDilate') as HTMLInputElement | null;
@@ -697,16 +650,10 @@ function currentOptions(): ExportOptions {
   };
 }
 
-// Where a finished export goes — a .zip download or a POST straight to Unity — is
-// captured at click time and travels WITH the request (`target`, echoed back by
-// main in export[-page]-complete). It used to live in module globals, which a
-// second click could clobber while an export was still running: main now rejects
-// the concurrent run, but the click would still have silently re-routed the
-// first export's result (e.g. a Send-to-Unity page export downloading as a zip).
 $('#exportBtn').addEventListener('click', () => {
   setStatus('Exporting…');
   showProgress(true);
-  post({ type: 'export', target: 'zip', scale: parseScale(), options: currentOptions(), elementConfigs: collectConfigs() });
+  post({ type: 'export', scale: parseScale(), options: currentOptions(), elementConfigs: collectConfigs() });
 });
 
 $('#exportPageBtn').addEventListener('click', () => {
@@ -715,127 +662,8 @@ $('#exportPageBtn').addEventListener('click', () => {
   // elementConfigs travel with page exports too — the per-element exclude/merge/
   // force-PNG choices saved on the elements apply to every frame on the page,
   // exactly as they would frame-by-frame (main re-applies them before the loop).
-  post({ type: 'export-page', target: 'zip', scale: parseScale(), options: currentOptions(), elementConfigs: collectConfigs() });
+  post({ type: 'export-page', scale: parseScale(), options: currentOptions(), elementConfigs: collectConfigs() });
 });
-
-$('#exportUnityBtn').addEventListener('click', () => {
-  setStatus('Exporting page → Unity…');
-  showProgress(true);
-  post({ type: 'export-page', target: 'unity', scale: parseScale(), options: currentOptions(), elementConfigs: collectConfigs() });
-});
-
-$('#exportFrameUnityBtn').addEventListener('click', () => {
-  setStatus('Exporting frame → Unity…');
-  showProgress(true);
-  post({ type: 'export', target: 'unity', scale: parseScale(), options: currentOptions(), elementConfigs: collectConfigs() });
-});
-
-// The plugin manifest's networkAccess.allowedDomains only whitelists
-// http://localhost:1995 (Figma matches the exact port — no wildcards), so any
-// other port is blocked by Figma before the fetch ever leaves the iframe.
-const UNITY_ALLOWED_PORT = 1995;
-
-function unityImportPort(): number {
-  const raw = ($('#unityPort') as HTMLInputElement)?.value;
-  return Math.min(65535, Math.max(1024, parseInt(raw, 10) || UNITY_ALLOWED_PORT));
-}
-
-function unityImportUrl(): string {
-  return `http://localhost:${unityImportPort()}/import`;
-}
-
-function unityToken(): string {
-  return ($('#unityToken') as HTMLInputElement)?.value.trim() || '';
-}
-
-async function sendToUnity(project: { name: string; initial: string }, screens: PageScreen[]) {
-  const url = unityImportUrl();
-  // JSON wire boundary (manifest version 2.0): each PNG goes as a base64 `b64`
-  // string — ~1.33× the binary size, vs ~3.7× for the old `data` number[]
-  // rendered as decimal text, and no 10× number[] heap copy beforehand. Unity's
-  // FigForgeLiveImport.LiveAsset reads `b64` first and still accepts the legacy
-  // `data` array from a 1.0-era plugin.
-  // Conservative scalability guard: the whole project is base64-encoded into one
-  // in-memory JSON body and POSTed in a single fetch — there is no streaming yet.
-  // Estimate the encoded payload (base64 ≈ 1.33× the raw bytes); past the limit a
-  // single JSON.stringify is liable to OOM the iframe (or be refused by Unity), so
-  // reject up front rather than crash mid-encode with no recoverable message.
-  // NOTE: a real fix is per-screen/per-asset streaming; this is the hard ceiling.
-  const APPROX_BODY_LIMIT = 200 * 1024 * 1024; // ~200 MB encoded
-  let rawBytes = 0;
-  for (const s of screens) for (const a of s.assets) rawBytes += a.data.length;
-  const approxBodyBytes = Math.ceil(rawBytes * 4 / 3);
-  if (approxBodyBytes > APPROX_BODY_LIMIT) {
-    setStatus(
-      `This project is too large to send (~${Math.round(approxBodyBytes / (1024 * 1024))} MB encoded, cap ${APPROX_BODY_LIMIT / (1024 * 1024)} MB) — the single-request send would likely run out of memory or be refused by Unity. Export fewer screens at a time.`,
-      true,
-    );
-    return;
-  }
-  let wireScreens: Array<{ name: string; manifest: string; section?: string; role?: string; assets: Array<{ name: string; b64: string }> }> | null = screens.map((s) => ({
-    name: s.name,
-    manifest: s.manifest,
-    section: s.section,
-    role: s.role,
-    assets: s.assets.map((a) => ({ name: a.name, b64: bytesToBase64(a.data) })),
-  }));
-  let serialized = false;
-  try {
-    const body = JSON.stringify({ project, screens: wireScreens });
-    serialized = true;
-    // Drop the large base64 wire copy before awaiting the fetch — the request
-    // already holds its own reference to `body`, so this lets the encoded screens
-    // be reclaimed instead of pinning two full copies for the whole round-trip.
-    wireScreens = null;
-    const res = await fetch(url, {
-      method: 'POST',
-      // charset is explicit so Unity's HttpListener decodes the body as UTF-8 —
-      // without it, ContentEncoding falls back to a legacy default that mangles
-      // every non-ASCII char (e.g. "→") into '?'.
-      headers: { 'Content-Type': 'application/json;charset=utf-8', 'X-FigForge-Token': unityToken() },
-      body,
-    });
-    if (res.ok) setStatus(`Sent ${screens.length} screen(s) → Unity. Building in the FigForge importer.`);
-    else if (res.status === 401)
-      setStatus('Unity rejected the token — copy it from the FigForge importer (Live import → Plugin token) into the Token field.', true);
-    else setStatus(`Unity refused the import (HTTP ${res.status}).`, true);
-  } catch (e) {
-    // If we never finished JSON.stringify, the throw is a serialization/OOM
-    // failure (the payload was too big to encode into one string), not a network
-    // problem — say so plainly so the user reduces the send rather than chasing
-    // Unity connectivity.
-    if (!serialized) {
-      setStatus(
-        `Couldn't build the send payload — the project is too large to serialize in one request (${String((e as Error)?.message || e)}). Export fewer screens at a time.`,
-        true,
-      );
-      return;
-    }
-    // A fetch to a non-whitelisted origin never reaches the network — Figma
-    // blocks it at the iframe boundary, surfacing the same TypeError as a
-    // connection-refused failure. Name the real cause when the port isn't the
-    // one the manifest allows, so the user doesn't chase a dead Unity instead.
-    const port = unityImportPort();
-    if (port !== UNITY_ALLOWED_PORT) {
-      setStatus(
-        `Figma blocks port ${port} — only ${UNITY_ALLOWED_PORT} is allowed by the plugin manifest. ` +
-          `Change the importer port back to ${UNITY_ALLOWED_PORT}, or add http://localhost:${port} to manifest allowedDomains.`,
-        true,
-      );
-    } else {
-      setStatus(`Couldn't reach Unity at ${url} — is the FigForge importer open with live import enabled?`, true);
-    }
-  }
-}
-
-function screenFromManifest(manifestJson: string): string {
-  try {
-    const parsed = JSON.parse(manifestJson);
-    return parsed?.screen?.name || 'screen';
-  } catch {
-    return 'screen';
-  }
-}
 
 // JSZip arrives from cdnjs at runtime (a <script> tag in ui.html) — offline or
 // behind a corporate proxy the tag fails and the global never exists. Checked
@@ -849,9 +677,9 @@ function jszipAvailable(): boolean {
 
 // Script tags load synchronously in order, so by the time this module runs the
 // JSZip global either exists or never will — surface a blocked cdnjs load the
-// moment the UI opens, not at download time. Unity send doesn't need JSZip.
+// moment the UI opens, not at download time.
 if (typeof JSZip === 'undefined') {
-  setStatus('JSZip failed to load from cdnjs (offline / proxy?) — Download Frame/Page will not save bundles; Send to Unity still works.', true);
+  setStatus('JSZip failed to load from cdnjs (offline / proxy?) — Download Frame/Page will not save bundles.', true);
 }
 
 async function downloadBundle(manifestJson: string, assets: BinaryAsset[]) {
@@ -955,168 +783,11 @@ function showProgress(show: boolean) { $('#progress').classList.toggle('show', s
 function setProgress(pct: number) { ($('#progress > div') as HTMLElement).style.width = `${pct}%`; }
 
 // ---------------------------------------------------------------------------
-// MCP bridge — a WebSocket client to the local FigForge bridge server. One
-// start/stop toggle in the header; the dot shows the live connection state.
-// While "on" it auto-reconnects, so it goes green as soon as the server is up.
-// ---------------------------------------------------------------------------
-const BRIDGE_URL = 'ws://localhost:1994/ws';
-// When the bridge server runs with FIGFORGE_BRIDGE_TOKEN set, it rejects
-// unauthenticated /ws upgrades. The browser WebSocket API can't set request
-// headers, but the server accepts the token via the ?token= query param too,
-// so present it that way. No token configured → the bare URL (zero-config).
-function bridgeUrl(): string {
-  const token = readPrefs().bridgeToken?.trim();
-  return token ? `${BRIDGE_URL}?token=${encodeURIComponent(token)}` : BRIDGE_URL;
-}
-let socket: WebSocket | null = null;
-let wantConnected = false;
-let reconnectTimer: number | null = null;
-
-function bridgeLog(line: string) { console.log('[FigForge MCP]', line); appendLog(line, { dim: true }); }
-
-type McpState = 'off' | 'connecting' | 'connected';
-function setMcp(state: McpState) {
-  const dot = $('#mcpDot');
-  const ctl = $('#mcpCtl');
-  dot.classList.toggle('on', state === 'connected');
-  dot.classList.toggle('connecting', state === 'connecting');
-  ctl.classList.toggle('connected', state === 'connected');
-  ctl.classList.toggle('connecting', state === 'connecting');
-  $('#mcpLabel').textContent =
-    state === 'connected' ? 'Disconnect' : state === 'connecting' ? 'Connecting…' : 'Connect MCP';
-}
-
-function scheduleReconnect() {
-  if (reconnectTimer !== null) return;
-  reconnectTimer = window.setTimeout(() => {
-    reconnectTimer = null;
-    if (wantConnected) connectMcp();
-  }, 2000);
-}
-
-function connectMcp() {
-  if (socket) return;
-  setMcp('connecting');
-  try {
-    socket = new WebSocket(bridgeUrl());
-    socket.onopen = () => { bridgeLog('connected'); setMcp('connected'); };
-    socket.onclose = () => {
-      socket = null;
-      if (wantConnected) { setMcp('connecting'); scheduleReconnect(); }
-      else setMcp('off');
-    };
-    socket.onerror = () => bridgeLog('socket error');
-    socket.onmessage = (ev) => {
-      try {
-        const parsed = JSON.parse(ev.data);
-        // Inbound allow-list: these bridge messages flow straight into
-        // document-mutating handlers in main, so only forward `type`s the bridge
-        // is actually allowed to send. Mirrors the `bridgeToolName` z.enum in
-        // server/src/schema.ts (the plugin can't import server code). A hostile
-        // local process on the bridge port can't drive an arbitrary handler.
-        if (!parsed || typeof parsed.type !== 'string' || !BRIDGE_COMMAND_TYPES.has(parsed.type)) {
-          bridgeLog('ignored message with unknown type: ' + String(parsed?.type));
-          return;
-        }
-        post({ type: 'mcp-request', payload: withCurrentExportSettings(parsed) });
-      }
-      catch { bridgeLog('bad message from server'); }
-    };
-  } catch (e) {
-    bridgeLog('connect failed: ' + String(e));
-    if (wantConnected) scheduleReconnect();
-  }
-}
-
-// Allow-listed inbound bridge command types. MUST stay in sync with the
-// `bridgeToolName` z.enum in server/src/schema.ts — the plugin can't import
-// server code, so the set is duplicated here verbatim.
-const BRIDGE_COMMAND_TYPES = new Set<string>([
-  'get_metadata',
-  'get_document',
-  'get_selection',
-  'get_node',
-  'list_frames',
-  'list_screens',
-  'get_node_details',
-  'get_design_context',
-  'get_screenshot',
-  'export_unity',
-  'export_project_unity',
-  'create_canonical',
-  'create_shell',
-]);
-
-function withCurrentExportSettings(payload: { type?: string; params?: Record<string, unknown> }) {
-  if (payload.type !== 'export_unity' && payload.type !== 'export_project_unity') return payload;
-  const params = payload.params || {};
-  const options = params.options && typeof params.options === 'object'
-    ? { ...currentOptions(), ...(params.options as Record<string, unknown>) }
-    : currentOptions();
-  return {
-    ...payload,
-    params: {
-      ...params,
-      scale: params.scale || parseScale(),
-      options,
-      elementConfigs: Array.isArray(params.elementConfigs) ? params.elementConfigs : collectConfigs(),
-    },
-  };
-}
-
-function disconnectMcp() {
-  wantConnected = false;
-  if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  // Detach the old socket's handlers before closing so its async onclose can't
-  // race a later connect (it would null out a freshly-created socket).
-  const old = socket;
-  if (old) { old.onclose = old.onmessage = old.onopen = old.onerror = null; old.close(); }
-  socket = null;
-  setMcp('off');
-}
-
-$('#mcpCtl').addEventListener('click', () => {
-  if (wantConnected) {
-    savePrefs({ mcpDesired: false });
-    disconnectMcp();
-  } else {
-    wantConnected = true;
-    savePrefs({ mcpDesired: true });
-    connectMcp();
-  }
-});
-
-// Optional bridge token (only needed when the server sets FIGFORGE_BRIDGE_TOKEN).
-// Saved as it's typed; a committed change (blur/Enter) reconnects so the new
-// credential is presented on the next upgrade.
-const bridgeTokenEl = document.getElementById('bridgeToken') as HTMLInputElement | null;
-if (bridgeTokenEl) {
-  const saved = readPrefs().bridgeToken;
-  if (saved) bridgeTokenEl.value = saved;
-  bridgeTokenEl.addEventListener('input', () => savePrefs({ bridgeToken: bridgeTokenEl.value.trim() }));
-  bridgeTokenEl.addEventListener('change', () => {
-    savePrefs({ bridgeToken: bridgeTokenEl.value.trim() });
-    if (!wantConnected) return;
-    if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    // Detach the old socket's handlers before closing so its async onclose can't
-    // run `socket = null` after connectMcp() has assigned the NEW socket — which
-    // would orphan the live connection.
-    const old = socket;
-    if (old) { old.onclose = old.onmessage = old.onopen = old.onerror = null; old.close(); }
-    socket = null;
-    connectMcp();
-  });
-}
-
-setMcp('off');
-
-
 function applySettings(prefs: UiPrefs) {
-  disconnectMcp();
   workingPrefs = prefs;
   const values = { ...defaultControls, ...prefs.controls };
   // Migrate settings saved by older UI versions.
-  for (const key of ['scale', 'unityPort', 'unityToken', 'bridgeToken', 'fontFaceDilate'] as const) {
+  for (const key of ['scale', 'fontFaceDilate'] as const) {
     if (typeof prefs[key] === 'string') values[key] = prefs[key]!;
   }
   if (typeof prefs.componentsPage === 'boolean') values.componentsPageChk = prefs.componentsPage;
@@ -1137,7 +808,6 @@ function applySettings(prefs: UiPrefs) {
   lastPreset = prefs.windowPreset === 'S' || prefs.windowPreset === 'L' ? prefs.windowPreset : 'M';
   setSizePresetUi(lastPreset);
   post({ type: 'resize-ui', preset: minimized ? 'mini' : lastPreset });
-  if (prefs.mcpDesired) { wantConnected = true; connectMcp(); }
 }
 
 const saveSettingsBtn = $('#saveSettingsBtn') as HTMLButtonElement;
@@ -1182,14 +852,12 @@ window.onmessage = (event: MessageEvent) => {
         : '';
       setStatus(`${msg.name} · ${msg.elementCount} layers${size}`);
       ($('#exportBtn') as HTMLButtonElement).disabled = false;
-      ($('#exportFrameUnityBtn') as HTMLButtonElement).disabled = false;
       renderTree();
       break;
 
     case 'no-selection':
       currentTree = null;
       ($('#exportBtn') as HTMLButtonElement).disabled = true;
-      ($('#exportFrameUnityBtn') as HTMLButtonElement).disabled = true;
       expandedNodes = new Set();
       setStatus('Select a frame, component, or group.');
       renderTree();
@@ -1227,32 +895,19 @@ window.onmessage = (event: MessageEvent) => {
       setStatus(`Exporting ${msg.label} (${msg.current}/${msg.total})`, false, true); // replace in place
       break;
 
-    // `msg.target` is the destination captured when the export was REQUESTED,
-    // echoed back by main — see the export button handlers. The download/send
-    // helpers print their own success/failure, so a "Bundle downloaded" can no
-    // longer precede (or survive) a JSZip failure.
+    // Download helpers report success only after ZIP packaging completes.
     case 'export-complete':
       showProgress(false);
       setProgress(0);
-      if (msg.target === 'unity') {
-        const screenName = screenFromManifest(msg.manifest);
-        sendToUnity(
-          { name: screenName, initial: screenName },
-          [{ name: screenName, manifest: msg.manifest, assets: msg.assets, role: 'screen' }]
-        );
-      } else {
-        downloadBundle(msg.manifest, msg.assets);
-      }
+      downloadBundle(msg.manifest, msg.assets);
+
       break;
 
     case 'export-page-complete':
       showProgress(false);
       setProgress(0);
-      if (msg.target === 'unity') {
-        sendToUnity(msg.project, msg.screens);
-      } else {
-        downloadProjectBundle(msg.project, msg.screens);
-      }
+      downloadProjectBundle(msg.project, msg.screens);
+
       break;
 
     case 'export-error':
@@ -1267,23 +922,11 @@ window.onmessage = (event: MessageEvent) => {
       setStatus(msg.message, !!msg.error);
       break;
 
-    case 'mcp-response':
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify(msg.payload));
-        bridgeLog(`→ ${msg.payload.type} ${msg.payload.error ? 'ERR' : 'ok'}`);
-      } else {
-        // The socket reconnected (or dropped) mid-roundtrip, so this computed
-        // reply has nowhere to go. Buffer-and-flush is out of scope; at least make
-        // the drop visible instead of silently swallowing the response.
-        bridgeLog(`dropped mcp-response (${msg.payload?.type ?? 'unknown'}) — socket not OPEN`);
-      }
-      break;
-
     default:
       // A message type main sent that this UI build doesn't handle (version skew
       // or a new path that forgot its UI case). Make it visible instead of
       // silently dropping it, so the gap is diagnosable from the log.
-      bridgeLog(`unhandled message from main: ${String(msg.type)}`);
+      appendLog(`unhandled message from main: ${String(msg.type)}`);
       break;
   }
 };

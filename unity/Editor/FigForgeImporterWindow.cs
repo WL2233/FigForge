@@ -2,7 +2,7 @@
 // FigForge — importer editor window. Window ▸ FigForge ▸ Importer.
 //
 // Detects FigForge manifests in the project, lets you configure canvas / fonts /
-// textures / canonical library / multi-page output, and builds the uGUI page.
+// textures / canonical library, and saves uGUI prefab assets.
 // =============================================================================
 
 using System.Collections.Generic;
@@ -12,7 +12,6 @@ using Newtonsoft.Json;
 using TMPro;
 using UnityEditor;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace FigForge
 {
@@ -37,20 +36,11 @@ namespace FigForge
         int _selectedProject = 0;
 
         // ---- config ----
-        enum UIBackend { uGUI, UIToolkit }
-        enum OutputMode { Scene, Prefab, Both }
         enum ScalePreset { MatchFigma, P720, P1080, Custom }
 
-        UIBackend _backend = UIBackend.uGUI;
-        string _uitkOutFolder = "Assets/FigForge/UI";
-        bool _uitkCreateDoc = true;
 
-        OutputMode _output = OutputMode.Scene;
         ScalePreset _scalePreset = ScalePreset.MatchFigma;
         float _customRefHeight = 1080f;
-        bool _newCanvas = false;   // default: reuse the scene's canvas
-        Canvas _existingCanvas;
-        bool _connectedScene = true;       // build under a shared UIFrameManager
         bool _disableRaycasts = true;
         bool _includeGroupsInAccessors = true;
         bool _componentsOnlyAccessors = true;  // accessors for controls only; labels/images need a [s] name marker
@@ -70,7 +60,7 @@ namespace FigForge
         // ---- ui state ----
         Vector2 _scroll, _logScroll;
         readonly List<(string msg, MessageType kind)> _log = new List<(string, MessageType)>();
-        bool _showCanvas, _showFonts, _showTextures, _showAtlas, _showCanonical, _showLive;
+        bool _showCanvas, _showFonts, _showTextures, _showAtlas, _showCanonical;
 
         WindowStyles _styles;
 
@@ -90,40 +80,13 @@ namespace FigForge
             w.Show();
         }
 
-        // Rebuild every imported live page from its on-disk bundle — same code path
-        // the live-import HTTP receiver uses, so importer upgrades (a new
-        // CanonicalSchema) apply without re-sending the page from Figma.
-        [MenuItem("Window/FigForge/Rebuild Live Pages")]
-        public static void RebuildLivePages()
-        {
-            string dataPath = Application.dataPath.Replace('\\', '/');
-            string liveAbs = dataPath + "/FigForge/Live";
-            var projects = Directory.Exists(liveAbs)
-                ? Directory.GetFiles(liveAbs, "project.json", SearchOption.AllDirectories)
-                : new string[0];
-            if (projects.Length == 0) { Debug.LogWarning("[FigForge] no live page bundles found under Assets/FigForge/Live."); return; }
-            var w = GetWindow<FigForgeImporterWindow>(false, "FigForge", true);
-            foreach (var abs in projects)
-            {
-                string rel = "Assets" + abs.Replace('\\', '/').Substring(dataPath.Length);
-                Debug.Log($"[FigForge] rebuilding live page: {rel}");
-                w.LiveBuildPage(rel);
-            }
-        }
-
         // A saved snapshot is local to this user and Unity project.
         string SettingsKey => "FigForge.Importer.Settings.v1." + Application.dataPath;
 
         sealed class SavedSettings
         {
-            public UIBackend backend = UIBackend.uGUI;
-            public string uitkOutFolder = "Assets/FigForge/UI";
-            public bool uitkCreateDoc = true;
-            public OutputMode output = OutputMode.Scene;
             public ScalePreset scalePreset = ScalePreset.MatchFigma;
             public float customRefHeight = 1080f;
-            public bool newCanvas = false;
-            public bool connectedScene = true;
             public bool disableRaycasts = true;
             public bool includeGroupsInAccessors = true;
             public bool componentsOnlyAccessors = true;
@@ -133,11 +96,8 @@ namespace FigForge
             public string prefabFolder = "Assets/FigForge/Prefabs";
             public TextureImportSettings tex = new TextureImportSettings();
             public AtlasSettings atlas = new AtlasSettings();
-            public string canvasId;
             public string libraryId;
             public Dictionary<string, string> fonts = new Dictionary<string, string>();
-            public bool liveEnabled = true;
-            public int livePort = 1995;
         }
 
         static string ObjectId(Object value) => value == null ? null : GlobalObjectId.GetGlobalObjectIdSlow(value).ToString();
@@ -150,14 +110,8 @@ namespace FigForge
             {
                 var settings = new SavedSettings
                 {
-                    backend = _backend,
-                    uitkOutFolder = _uitkOutFolder,
-                    uitkCreateDoc = _uitkCreateDoc,
-                    output = _output,
                     scalePreset = _scalePreset,
                     customRefHeight = _customRefHeight,
-                    newCanvas = _newCanvas,
-                    connectedScene = _connectedScene,
                     disableRaycasts = _disableRaycasts,
                     includeGroupsInAccessors = _includeGroupsInAccessors,
                     componentsOnlyAccessors = _componentsOnlyAccessors,
@@ -167,11 +121,8 @@ namespace FigForge
                     prefabFolder = _prefabFolder,
                     tex = _tex,
                     atlas = _atlas,
-                    canvasId = ObjectId(_existingCanvas),
                     libraryId = ObjectId(_canonicalLibrary),
                     fonts = _fontMap.ToDictionary(pair => pair.Key, pair => ObjectId(pair.Value)),
-                    liveEnabled = FigForgeLiveImport.Enabled,
-                    livePort = FigForgeLiveImport.Port
                 };
                 EditorPrefs.SetString(SettingsKey, JsonConvert.SerializeObject(settings));
                 if (notify) ShowNotification(new GUIContent("当前设置已保存"));
@@ -199,14 +150,8 @@ namespace FigForge
 
         void ApplySettings(SavedSettings settings)
         {
-            _backend = settings.backend;
-            _uitkOutFolder = settings.uitkOutFolder ?? "Assets/FigForge/UI";
-            _uitkCreateDoc = settings.uitkCreateDoc;
-            _output = settings.output;
             _scalePreset = settings.scalePreset;
             _customRefHeight = settings.customRefHeight;
-            _newCanvas = settings.newCanvas;
-            _connectedScene = settings.connectedScene;
             _disableRaycasts = settings.disableRaycasts;
             _includeGroupsInAccessors = settings.includeGroupsInAccessors;
             _componentsOnlyAccessors = settings.componentsOnlyAccessors;
@@ -220,7 +165,6 @@ namespace FigForge
             _editorColumns = Mathf.Clamp(_editorColumns, 1, 50);
             EditorPrefs.SetInt(PrefWarmUpBatchSize, _warmUpBatchSize);
             SetEditorColumnsPref(_editorColumns);
-            _existingCanvas = ResolveObject<Canvas>(settings.canvasId);
             _canonicalLibrary = ResolveObject<CanonicalLibrary>(settings.libraryId);
             _fontMap.Clear();
             if (settings.fonts != null)
@@ -230,8 +174,6 @@ namespace FigForge
                     if (font != null) _fontMap[pair.Key] = font;
                 }
             if (_manifest != null) BuildFontKeys();
-            if (FigForgeLiveImport.Port != settings.livePort) FigForgeLiveImport.Port = settings.livePort;
-            if (FigForgeLiveImport.Enabled != settings.liveEnabled) FigForgeLiveImport.Enabled = settings.liveEnabled;
         }
 
         void SettingsBar()
@@ -294,7 +236,7 @@ namespace FigForge
 
         // The schema marker sits in the file head (it's the first/second JSON key the
         // plugin emits), so read only a bounded prefix instead of slurping the whole
-        // file. RefreshManifests runs on every OnEnable/ImportZip/LiveBuildPage and
+        // file. RefreshManifests runs on every OnEnable/ImportZip and
         // scans the entire Assets tree — full ReadAllText on every manifest.json /
         // project.json (some carry large inlined data) made that needlessly heavy.
         const int SchemaProbeBytes = 8 * 1024;
@@ -321,7 +263,6 @@ namespace FigForge
 
         void FocusFontsFoldout()
         {
-            _showLive = false;
             _showCanvas = false;
             _showFonts = true;
             _showCanonical = false;
@@ -398,7 +339,6 @@ namespace FigForge
 
             Header();
             SettingsBar();
-            LiveImportSection();
             ManifestPicker();
             if (_manifest != null)
             {
@@ -409,28 +349,12 @@ namespace FigForge
                 AtlasSection();
                 BuildBar();
             }
-            RefsBar();
             LogSection();
 
             EditorGUILayout.EndScrollView();
         }
 
-        // Maintenance for an already-built page: re-wire serialized accessor refs, or report
-        // which ones are missing — across every FigForgeFrame in the open scene(s). Independent
         // of the loaded manifest, so it's available even without a manifest selected.
-        void RefsBar()
-        {
-            using (new EditorGUILayout.VerticalScope(_styles.card))
-            {
-                EditorGUILayout.LabelField("Page references", _styles.sectionTitle);
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    if (GUILayout.Button("Validate Page Refs", _styles.button, GUILayout.Height(26))) FigForgeRefTools.ValidateSceneRefs();
-                    if (GUILayout.Button("Populate Page Refs", _styles.button, GUILayout.Height(26))) FigForgeRefTools.PopulateSceneRefs();
-                }
-            }
-        }
-
         void Header()
         {
             using (new EditorGUILayout.VerticalScope(_styles.hero))
@@ -446,7 +370,7 @@ namespace FigForge
                             GUILayout.Label($"v{PackageVersion()}", _styles.versionPill, GUILayout.Width(60), GUILayout.Height(18));
                             GUILayout.FlexibleSpace();
                         }
-                        GUILayout.Label("Forge Figma frames into Unity UI, keep live import close, and rebuild pages without losing your scene work.", _styles.heroSubtitle);
+                        GUILayout.Label("Forge Figma frames into Unity UI, export ZIP bundles and generate prefab assets.", _styles.heroSubtitle);
                     }
 
                     GUILayout.FlexibleSpace();
@@ -462,68 +386,6 @@ namespace FigForge
                     SummaryCard("Sprites", (_manifest?.assets.Count ?? 0).ToString(), "texture assets", new Color(0.28f, 0.75f, 1f));
                 }
             }
-        }
-
-        void LiveImportSection()
-        {
-            using (new EditorGUILayout.VerticalScope(_styles.card))
-            {
-                _showLive = Foldout(_showLive, "Live import (Figma to Unity)");
-                if (!_showLive)
-                {
-                    using (new EditorGUI.IndentLevelScope())
-                        LiveImportTokenRow(false);
-                    return;
-                }
-                using (new EditorGUI.IndentLevelScope())
-                {
-                    bool en = EditorGUILayout.ToggleLeft("Run live import server", FigForgeLiveImport.Enabled, _styles.toggle);
-                    if (en != FigForgeLiveImport.Enabled) FigForgeLiveImport.Enabled = en;
-
-                    using (new EditorGUI.DisabledScope(!en))
-                    {
-                        int port = EditorGUILayout.DelayedIntField("Port", FigForgeLiveImport.Port);
-                        if (port != FigForgeLiveImport.Port) FigForgeLiveImport.Port = port;
-
-                        LiveImportTokenRow(true);
-                    }
-
-                    EditorGUILayout.LabelField(
-                        (FigForgeLiveImport.Listening ? "Online  " : "Idle  ") + FigForgeLiveImport.Status,
-                        _styles.subtleLabel);
-                    EditorGUILayout.HelpBox(
-                        "Paste this token into the Figma plugin (Unity token field) once. Then hit Send to Unity to build the page here automatically. Loopback only.",
-                        MessageType.None);
-                }
-            }
-        }
-
-        void LiveImportTokenRow(bool allowRegenerate)
-        {
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.PrefixLabel("Plugin token");
-                EditorGUILayout.SelectableLabel(FigForgeLiveImport.Token, EditorStyles.textField,
-                    GUILayout.Height(EditorGUIUtility.singleLineHeight));
-                if (GUILayout.Button("Copy", _styles.miniButton, GUILayout.Width(46)))
-                    EditorGUIUtility.systemCopyBuffer = FigForgeLiveImport.Token;
-                if (allowRegenerate && GUILayout.Button("New", _styles.miniButton, GUILayout.Width(40)) &&
-                    EditorUtility.DisplayDialog("Regenerate live-import token?",
-                        "The Figma plugin won't be able to import again until the new token is pasted into its Unity token field.",
-                        "Regenerate", "Cancel"))
-                    FigForgeLiveImport.RegenerateToken();
-            }
-        }
-
-        /// <summary>Entry point used by the live-import HTTP receiver: discover
-        /// the freshly-written bundle and build it with the window's settings.</summary>
-        public bool LiveBuildPage(string projectJsonAssetPath)
-        {
-            RefreshManifests();
-            FocusFontsFoldout();
-            bool ok = BuildPageProject(projectJsonAssetPath);
-            Repaint();
-            return ok;
         }
 
         string PackageVersion()
@@ -574,16 +436,10 @@ namespace FigForge
                 {
                     _selectedProject = EditorGUILayout.Popup("Page bundle", _selectedProject,
                         _projectPaths.Select(p => Path.GetFileName(Path.GetDirectoryName(p)) + " / project.json").ToArray());
-                    if (ForgePageButton($"Forge Page to {_backend} (all screens)",
+                    if (ForgePageButton("Generate Prefabs (all frames)",
                         _styles.pageForgeNormal, _styles.pageForgeHover, _styles.pageForgeActive, 38f))
                         BuildPageProject(_projectPaths[_selectedProject]);
                     EditorGUILayout.Space(4);
-                    using (new EditorGUI.DisabledScope(_backend != UIBackend.uGUI))
-                    {
-                        if (ForgePageButton("Forge Page with Customizations to uGUI",
-                            _styles.customForgeNormal, _styles.customForgeHover, _styles.customForgeActive, 38f))
-                            BuildPageProject(_projectPaths[_selectedProject], includeUnityCustomizations: true);
-                    }
                     EditorGUILayout.Space(5);
                 }
 
@@ -599,7 +455,7 @@ namespace FigForge
 
                 if (_manifestPaths.Count == 0)
                 {
-                    EditorGUILayout.HelpBox("Import a FigForge export .zip above, drop an extracted folder under Assets/, or use the MCP export_unity tool, then press Rescan.", MessageType.Info);
+                    EditorGUILayout.HelpBox("Import a FigForge export .zip above, drop an extracted folder under Assets/, then press Rescan.", MessageType.Info);
                     return;
                 }
 
@@ -651,48 +507,15 @@ namespace FigForge
         {
             using (new EditorGUILayout.VerticalScope(_styles.card))
             {
-                _showCanvas = Foldout(_showCanvas, "Backend & Output");
+                _showCanvas = Foldout(_showCanvas, "Prefab output");
                 if (!_showCanvas) return;
-                using (new EditorGUI.IndentLevelScope())
-                {
-                    _backend = (UIBackend)EditorGUILayout.EnumPopup("UI backend", _backend);
-
-                    if (_backend == UIBackend.UIToolkit)
-                    {
-                        _uitkOutFolder = EditorGUILayout.TextField("UXML/USS folder", _uitkOutFolder);
-                        _uitkCreateDoc = EditorGUILayout.ToggleLeft("Create UIDocument + PanelSettings in scene", _uitkCreateDoc, _styles.toggle);
-                        _connectedScene = EditorGUILayout.ToggleLeft("Connected scene (one UIDocument toggles pages)", _connectedScene, _styles.toggle);
-                        EditorGUILayout.HelpBox("UI Toolkit emits a .uxml + .uss. Canonical layers become <Button> with a fge-ref-<name> USS class. Style that class once in your own stylesheet.", MessageType.None);
-                    }
-                    else
-                    {
-                        _output = (OutputMode)EditorGUILayout.EnumPopup("Output", _output);
-                        _connectedScene = EditorGUILayout.ToggleLeft("Connected scene (UIFrameManager toggles pages)", _connectedScene, _styles.toggle);
-                        _newCanvas = EditorGUILayout.ToggleLeft("Create new Canvas (off = add to existing)", _newCanvas, _styles.toggle);
-                        if (!_newCanvas)
-                        {
-                            // Auto-fill the slot with the scene's first canvas when blank.
-                            if (_existingCanvas == null) _existingCanvas = FirstSceneCanvas();
-                            _existingCanvas = (Canvas)EditorGUILayout.ObjectField("Canvas", _existingCanvas, typeof(Canvas), true);
-                            if (_existingCanvas == null)
-                                EditorGUILayout.HelpBox("No Canvas in the scene yet - one will be created on Forge, then reused next time.", MessageType.None);
-                        }
-                        _scalePreset = (ScalePreset)EditorGUILayout.EnumPopup("Reference height", _scalePreset);
-                        if (_scalePreset == ScalePreset.Custom)
-                            _customRefHeight = EditorGUILayout.FloatField("Custom height", _customRefHeight);
-                        _disableRaycasts = EditorGUILayout.ToggleLeft("Disable raycast targets on non-interactive graphics", _disableRaycasts, _styles.toggle);
-                        _componentsOnlyAccessors = EditorGUILayout.ToggleLeft(new GUIContent("Accessors for components only (skip labels & images)", "On: only canonical controls (buttons, toggles, inputs, ...) get C# accessors. Off: labels and images do too (legacy behavior).\nEither way, prefix a layer name with [s] to force-include that one element; the [s] is dropped from the GameObject and variable name."), _componentsOnlyAccessors, _styles.toggle);
-                        _includeGroupsInAccessors = EditorGUILayout.ToggleLeft("Generate C# accessors for Figma groups/frames", _includeGroupsInAccessors, _styles.toggle);
-                        int warmUpBatchSize = Mathf.Clamp(EditorGUILayout.DelayedIntField("Import warmup batch size", _warmUpBatchSize), 1, 8192);
-                        if (warmUpBatchSize != _warmUpBatchSize)
-                        {
-                            _warmUpBatchSize = warmUpBatchSize;
-                            EditorPrefs.SetInt(PrefWarmUpBatchSize, _warmUpBatchSize);
-                        }
-                        if (_output != OutputMode.Scene)
-                            _prefabFolder = EditorGUILayout.TextField("Prefab folder", _prefabFolder);
-                    }
-                }
+                _prefabFolder = EditorGUILayout.TextField("Prefab folder", _prefabFolder);
+                _scalePreset = (ScalePreset)EditorGUILayout.EnumPopup("Scale", _scalePreset);
+                if (_scalePreset == ScalePreset.Custom) _customRefHeight = EditorGUILayout.FloatField("Reference height", _customRefHeight);
+                _disableRaycasts = EditorGUILayout.ToggleLeft("Disable decorative raycasts", _disableRaycasts);
+                _componentsOnlyAccessors = EditorGUILayout.ToggleLeft("Accessors for controls only", _componentsOnlyAccessors);
+                _includeGroupsInAccessors = EditorGUILayout.ToggleLeft("Generate group accessors", _includeGroupsInAccessors);
+                _warmUpBatchSize = Mathf.Clamp(EditorGUILayout.IntField("Warmup batch size", _warmUpBatchSize), 1, 8192);
             }
         }
 
@@ -782,7 +605,7 @@ namespace FigForge
         void BuildBar()
         {
             using (new EditorGUILayout.VerticalScope(_styles.buildCard))
-                if (GUILayout.Button($"Forge \"{_manifest.screen?.name}\"", _styles.primaryButton, GUILayout.Height(34)))
+                if (GUILayout.Button($"Generate Prefab \"{_manifest.screen?.name}\"", _styles.primaryButton, GUILayout.Height(34)))
                     Build();
         }
 
@@ -802,116 +625,48 @@ namespace FigForge
         void Build()
         {
             _log.Clear();
-            FontAutoImporter.ClearCache();
-            _editorColumns = EditorColumnsPref;
-            if (_manifest?.screen == null) { Log("manifest has no screen", MessageType.Error); return; }
-            ApplyManifestSettings(_manifest);
-            if (_backend == UIBackend.UIToolkit) { BuildUITK(); return; }
+            if (_manifest?.screen == null) return;
+            try { BuildPrefab(_manifest, Path.GetDirectoryName(_manifestPaths[_selected]), ""); }
+            catch (System.Exception ex) { Debug.LogException(ex); Log(ex.Message, MessageType.Error); }
+            finally { EditorUtility.ClearProgressBar(); AssetDatabase.SaveAssets(); }
+        }
 
+        void BuildPrefab(Manifest manifest, string sourceDir, string section, string role = "screen")
+        {
+            FontAutoImporter.ClearCache();
+            var folder = $"{_spriteFolder}/{SafeName(manifest.screen.name)}";
+            var sprites = TextureImportHelper.Import(manifest, sourceDir, folder, _tex);
+            if (_atlas.create) SpriteAtlasHelper.Build(manifest.screen.name, folder, _atlas);
+            var scene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
             try
             {
-                EditorUtility.DisplayProgressBar("FigForge", "Importing textures…", 0.15f);
-                var sourceDir = Path.GetDirectoryName(_manifestPaths[_selected]);
-                var screenFolder = $"{_spriteFolder}/{SafeName(_manifest.screen.name)}";
-                var sprites = TextureImportHelper.Import(_manifest, sourceDir, screenFolder, _tex);
-                Log($"imported {sprites.Count} sprite(s)", MessageType.Info);
-
-                if (_atlas.create) SpriteAtlasHelper.Build(_manifest.screen.name, screenFolder, _atlas);
-
-                EditorUtility.DisplayProgressBar("FigForge", "Forging hierarchy…", 0.55f);
-                var canvas = ResolveCanvas(out bool canvasCreated);
-                Transform parent = canvas.transform;
-
-                // Treat the lone manifest as a one-screen bundle so it runs through the SAME
-                // stamp-based reuse as Forge Page: re-Forging the same screen patches the frame in
-                // place (no duplicate) instead of building a second copy, and the manual-control
-                // guard runs.
-                //
-                // If an earlier Forge already imported this screen — a page bundle (stamped with the
-                // Figma project name) OR a prior single Forge — adopt ITS import scope (project /
-                // section / role) so importKey + manifestHash line up with how it was built and
-                // ReuseOrBuildScreen patches that exact frame. Without this, a page-built frame
-                // wouldn't match the single scope and we'd build a duplicate beside it. With no
-                // prior frame, fall back to a fresh per-screen single scope so stale-removal can
-                // never reach a sibling single import.
-                var scope = ImportScope(parent);
-                var prior = FindImportedByScreen(scope, _manifest.screen.name);
-                var ps = prior != null
-                    ? new ProjectScreen { name = _manifest.screen.name, manifest = "", section = prior.section, role = prior.role }
-                    : new ProjectScreen { name = _manifest.screen.name, manifest = "", section = "", role = "screen" };
-                var ls = new LoadedScreen
-                {
-                    m = _manifest, srcDir = sourceDir, ps = ps,
-                    importKey = ImportKey(ps, _manifest),
-                    manifestHash = ManifestHash(_manifest, ps, _includeGroupsInAccessors, _componentsOnlyAccessors),
-                };
-                string projectName = prior != null ? prior.projectName : "single/" + ls.importKey;
-
-                if (!canvasCreated && !ConfirmPageForge(new List<LoadedScreen> { ls }, scope, projectName, false))
-                { Log("Forge cancelled — manual controls preserved", MessageType.Info); return; }
-
-                UIFrameManager mgr = null;
-                if (_connectedScene)
-                {
-                    mgr = canvas.GetComponent<UIFrameManager>() ?? canvas.gameObject.AddComponent<UIFrameManager>();
-                    mgr.editorColumns = _editorColumns;
-                }
-
-                // Reuse the existing frame when the design is unchanged; otherwise rebuild it in
-                // place (the old one is replaced, not duplicated). builtCtx is null on reuse — then
-                // GenerateAndWireFrame re-wires from the registry instead of doing a fresh build.
-                var page = ReuseOrBuildScreen(ls, projectName, parent, sprites, false, out var ctx);
-                if (page == null) { Log("build produced no page", MessageType.Error); return; }
-
-                var screen = page.GetComponent<FigForgeFrame>() ?? page.AddComponent<FigForgeFrame>();
-                if (mgr != null)
-                {
-                    mgr.Register(screen);
-                    Log($"registered page '{screen.ScreenKey}' on UIFrameManager", MessageType.Info);
-                }
-
-                // Generate + wire the strongly-typed accessor layer (UIFrames.<Frame> + the
-                // FigForgeFrame subclass). Compile is deferred a tick (a mid-import reload would
-                // abort the build); the post-compile hook swaps in the subclass + wires its refs.
-                GenerateAndWireFrame(page, _manifest, ctx, screen, "");
-                if (mgr != null)
-                    FigForgeFrameSceneTools.ArrangeRootFrames(canvas.GetComponent<FigForgeCanvasHelper>(), false);
-
-                if (_output != OutputMode.Scene) SavePrefab(page);
-                if (_output == OutputMode.Prefab) DestroyImmediate(page);
-
-                // Creation-undo covers only what THIS import created: the canvas when we
-                // made it (its children — the page — go with it), else the page alone
-                // (unless Prefab-only output already destroyed the scene instance).
-                // ReuseOrBuildScreen registers a NEWLY-built frame for creation-undo (a reused
-                // frame deliberately survives undo); here we only add the canvas when we made it.
-                if (canvasCreated)
-                    Undo.RegisterCreatedObjectUndo(canvas.gameObject, "FigForge Build");
-                Undo.SetCurrentGroupName("FigForge Build");
-                EditorUtility.SetDirty(canvas);
-                if (mgr != null) EditorUtility.SetDirty(mgr);
-                if (_output != OutputMode.Prefab)
-                    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(
-                        UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
-
-                Log($"built '{_manifest.screen.name}' ✓", MessageType.Info);
+                var host = new GameObject("FigForge Prefab Build", typeof(RectTransform), typeof(Canvas));
+                UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(host, scene);
+                var ctx = MakeContext(manifest, sprites);
+                host.GetComponent<RectTransform>().sizeDelta = new Vector2(
+                    manifest.screen.figmaSize.w * ctx.scaleFactor,
+                    manifest.screen.figmaSize.h * ctx.scaleFactor);
+                var page = HierarchyBuilder.BuildPage(manifest, host.transform, ctx);
+                if (page == null) throw new System.InvalidOperationException("No prefab hierarchy was produced.");
+                var frame = page.GetComponent<FigForgeFrame>() ?? page.AddComponent<FigForgeFrame>();
+                frame.isShell = FrameRoles.IsShell(role);
+                frame.shellKey = frame.isShell ? section ?? "" : "";
+                bool isOverlay = FrameRoles.IsOverlay(role);
+                if (isOverlay && page.GetComponent<FigForgeOverlayLayer>() == null)
+                    page.AddComponent<FigForgeOverlayLayer>();
+                GenerateAndWireFrame(page, manifest, ctx, frame, section, isOverlay);
+                TextureImportHelper.EnsureFolder(_prefabFolder);
+                var path = $"{_prefabFolder}/{SafeName(manifest.screen.name)}.prefab";
+                var saved = PrefabUtility.SaveAsPrefabAsset(page, path);
+                if (saved == null) throw new System.IO.IOException($"Could not save prefab: {path}");
+                FrameCodeGenWire.QueuePrefab(path);
+                Log($"saved prefab → {path}", MessageType.Info);
             }
-            catch (System.Exception e)
-            {
-                // Also surface in the Console: the in-window log is invisible when the
-                // importer isn't focused (the per-screen inner catches already LogError).
-                Debug.LogError($"[FigForge] build failed: {e}");
-                Log($"build failed: {e.Message}\n{e.StackTrace}", MessageType.Error);
-            }
-            finally
-            {
-                EditorUtility.ClearProgressBar();
-                AssetDatabase.SaveAssets();
-            }
+            finally { UnityEditor.SceneManagement.EditorSceneManager.ClosePreviewScene(scene); }
         }
 
         // ---- Whole-page (project bundle) build ---------------------------------
-        struct LoadedScreen { public Manifest m; public string srcDir; public ProjectScreen ps; public string importKey; public string manifestHash; }
+        struct LoadedScreen { public Manifest m; public string srcDir; public ProjectScreen ps;  }
 
         BuildContext MakeContext(Manifest m, Dictionary<string, Sprite> sprites)
         {
@@ -929,168 +684,12 @@ namespace FigForge
             };
         }
 
-        static Transform FindContentSlot(GameObject root)
-        {
-            foreach (var t in root.GetComponentsInChildren<Transform>(true))
-            {
-                var n = t.name.ToLowerInvariant();
-                if (n == "content" || n == "content_slot") return t;
-            }
-            return null;
-        }
-
-        static string StableHash(string text)
-        {
-            unchecked
-            {
-                ulong hash = 14695981039346656037UL;
-                for (int i = 0; i < (text ?? "").Length; i++)
-                {
-                    hash ^= text[i];
-                    hash *= 1099511628211UL;
-                }
-                return hash.ToString("x16");
-            }
-        }
-
-        static string ImportKey(ProjectScreen ps, Manifest m)
-        {
-            string role = string.IsNullOrEmpty(ps.role) ? "screen" : ps.role;
-            string section = ps.section ?? "";
-            string name = m.screen != null && !string.IsNullOrEmpty(m.screen.name)
-                ? m.screen.name
-                : (!string.IsNullOrEmpty(ps.name) ? ps.name : "screen");
-            return $"{role}|{section}|{name}";
-        }
-
-        static string ManifestHash(Manifest m, ProjectScreen ps, bool includeGroupsInAccessors, bool componentsOnlyAccessors)
-        {
-            string exportedAt = m.exportedAt;
-            m.exportedAt = "";
-            try
-            {
-                string role = string.IsNullOrEmpty(ps.role) ? "screen" : ps.role;
-                string section = ps.section ?? "";
-                // Fold the importer's canonical build version into the hash so a
-                // Unity-side generation change (e.g. raycastable control backgrounds)
-                // busts the screen-level reuse cache and forces a rebuild even when
-                // the Figma design itself is unchanged.
-                return StableHash(JsonConvert.SerializeObject(m) + "\nrole=" + role + "\nsection=" + section
-                    + "\nbuild=" + HierarchyBuilder.CanonicalSchema
-                    + "\nincludeGroupsInAccessors=" + includeGroupsInAccessors
-                    + "\ncomponentsOnlyAccessors=" + componentsOnlyAccessors);
-            }
-            finally
-            {
-                m.exportedAt = exportedAt;
-            }
-        }
-
-        static FigForgeImportStamp FindImported(Transform scope, string projectName, string importKey)
-        {
-            if (scope == null) return null;
-            foreach (var stamp in scope.GetComponentsInChildren<FigForgeImportStamp>(true))
-                if (stamp != null && stamp.projectName == projectName && stamp.importKey == importKey)
-                    return stamp;
-            return null;
-        }
-
-        // Find a frame already imported for this screen by NAME, regardless of which Forge path
-        // stamped it (page bundles use the Figma project name; single Forge a "single/..." scope).
-        // Lets single Forge adopt a page-built frame and patch it in place instead of duplicating.
-        static FigForgeImportStamp FindImportedByScreen(Transform scope, string screenName)
-        {
-            if (scope == null || string.IsNullOrEmpty(screenName)) return null;
-            foreach (var stamp in scope.GetComponentsInChildren<FigForgeImportStamp>(true))
-                if (stamp != null && stamp.screenName == screenName) return stamp;
-            return null;
-        }
-
-        static Transform ImportScope(Transform parent)
-        {
-            var canvas = parent != null ? parent.GetComponentInParent<Canvas>() : null;
-            return canvas != null ? canvas.transform : (parent != null ? parent.root : null);
-        }
-
-        static void StampImported(GameObject go, string projectName, LoadedScreen screen)
-        {
-            if (go == null) return;
-            var stamp = go.GetComponent<FigForgeImportStamp>() ?? go.AddComponent<FigForgeImportStamp>();
-            stamp.projectName = projectName;
-            stamp.screenName = screen.m.screen != null ? screen.m.screen.name : screen.ps.name;
-            stamp.role = string.IsNullOrEmpty(screen.ps.role) ? "screen" : screen.ps.role;
-            stamp.section = screen.ps.section ?? "";
-            stamp.importKey = screen.importKey;
-            stamp.manifestHash = screen.manifestHash;
-        }
-
-        void RemoveStaleImported(Transform scope, string projectName, HashSet<string> expectedKeys)
-        {
-            if (scope == null) return;
-            var stamps = scope.GetComponentsInChildren<FigForgeImportStamp>(true).ToArray();
-            foreach (var stamp in stamps)
-            {
-                if (stamp == null || stamp.projectName != projectName) continue;
-                if (expectedKeys.Contains(stamp.importKey)) continue;
-                Log($"removed stale screen '{stamp.screenName}'", MessageType.Info);
-                DestroyImmediate(stamp.gameObject);
-            }
-        }
-
-        GameObject ReuseOrBuildScreen(LoadedScreen screen, string projectName, Transform parent, Dictionary<string, Sprite> sprites, bool stretch, out BuildContext builtCtx)
-        {
-            builtCtx = null;
-            var existing = FindImported(ImportScope(parent), projectName, screen.importKey);
-            if (existing != null && existing.manifestHash == screen.manifestHash)
-            {
-                existing.transform.SetParent(parent, false);
-                if (stretch) StretchToParent(existing.gameObject);
-                EnsureImportMarkers(existing.gameObject); // migrate a legacy (pre-marker) frame
-                Log($"reused unchanged '{screen.m.screen.name}'", MessageType.Info);
-                return existing.gameObject; // reused → its generated accessors already exist
-            }
-            // A changed frame is rebuilt from scratch (its GameObject is destroyed below), so
-            // capture the user-set `persistent` (don't-auto-hide) flag — the importer doesn't
-            // re-derive it from the manifest — and carry it onto the rebuilt frame so a
-            // re-import never silently resets the user's choice. (== null, not ??: GetComponent
-            // on a missing component yields Unity's fake-null stub that ?? treats as found.)
-            bool prevPersistent = false;
-            if (existing != null)
-            {
-                var existingFrame = existing.gameObject.GetComponent<FigForgeFrame>();
-                prevPersistent = existingFrame != null && existingFrame.persistent;
-                Log($"patched changed '{screen.m.screen.name}'", MessageType.Info);
-                DestroyImmediate(existing.gameObject);
-            }
-
-            var ctx = MakeContext(screen.m, sprites);
-            var page = HierarchyBuilder.BuildPage(screen.m, parent, ctx);
-            if (page == null) return null;
-            Undo.RegisterCreatedObjectUndo(page, "FigForge Build Page"); // newly built only — reused screens above must survive undo
-            builtCtx = ctx; // expose the build context so the caller can generate + wire accessors
-            if (stretch) StretchToParent(page);
-            StampImported(page, projectName, screen);
-            EnsureImportMarkers(page); // fresh build: everything here is imported
-            if (prevPersistent)
-            {
-                var pf = page.GetComponent<FigForgeFrame>();
-                if (pf == null) pf = page.AddComponent<FigForgeFrame>();
-                pf.persistent = true;
-            }
-            return page;
-        }
-
-        // Generate the strongly-typed accessor layer for a freshly-built frame and register
-        // each member by its identifier so the post-compile hook can wire the subclass.
-        // Reused unchanged frames still get rewired from their FigForgeScreen registry; this
-        // repairs stale/null serialized refs without forcing a rebuild.
-        void GenerateAndWireFrame(GameObject page, Manifest m, BuildContext ctx, FigForgeFrame frame, string section, bool includeUnityCustomizations = false, bool isOverlay = false)
+        void GenerateAndWireFrame(GameObject page, Manifest m, BuildContext ctx, FigForgeFrame frame, string section, bool isOverlay = false)
         {
             if (page == null || m == null) return;
             var model = FrameCodeGenDriver.BuildModel(m, section ?? "", _includeGroupsInAccessors, _componentsOnlyAccessors, isOverlay);
             var targets = new Dictionary<string, GameObject>();
             ResolveFrameMemberTargets(model, ctx, page.GetComponent<FigForgeScreen>(), targets);
-            int customCount = includeUnityCustomizations ? AddUnityCustomizationMembers(page, model, targets) : 0;
             FrameCodeGenDriver.WriteFiles(model);
             // Overlays have no generated frame class to upgrade to (see WriteFiles) — leaving
             // generatedType empty keeps FrameCodeGenWire from trying to swap in a missing type.
@@ -1141,8 +740,6 @@ namespace FigForge
                 EditorUtility.SetDirty(frame);
             }
             Log($"{(ctx != null ? "generated" : "refreshed")} accessors for frame '{model.className}' ({model.members.Count} member(s))", MessageType.Info);
-            if (customCount > 0)
-                Log($"included {customCount} Unity customization accessor(s) for frame '{model.className}'", MessageType.Info);
             // When the generated code is unchanged, no compile follows this import and the
             // [DidReloadScripts] upgrade never fires — the rebuilt page would stay on the
             // base FigForgeFrame (UIFrames.X resolves null). Upgrade now; if a compile IS
@@ -1165,308 +762,7 @@ namespace FigForge
             }
         }
 
-        int AddUnityCustomizationMembers(GameObject page, FrameModel model, Dictionary<string, GameObject> targets)
-        {
-            if (page == null || model.members == null) return 0;
-
-            var existingTargets = new HashSet<GameObject>(targets.Values.Where(go => go != null));
-            var existingControlRoots = new List<Transform>();
-            foreach (var go in existingTargets)
-                if (go != null && IsAccessorControlRoot(go))
-                    existingControlRoots.Add(go.transform);
-
-            var taken = new HashSet<string>(model.members.Select(m => m.Key));
-            var customControlRoots = new List<Transform>();
-            int added = 0;
-
-            foreach (var tr in page.GetComponentsInChildren<Transform>(true))
-            {
-                if (tr == null || tr == page.transform) continue;
-                var go = tr.gameObject;
-                if (existingTargets.Contains(go)) continue;
-                if (IsGeneratedInfrastructure(go)) continue;
-                if (IsDescendantOfAny(tr, existingControlRoots)) continue;
-                if (IsDescendantOfAny(tr, customControlRoots)) continue;
-                if (!TryGetUnityCustomizationType(go, out var csharpType, out var isControlRoot)) continue;
-
-                string identifier = UniqueIdentifier(IdentifierUtil.ToIdentifier(go.name), taken);
-                model.members.Add(new FrameMember
-                {
-                    identifier = identifier,
-                    csharpType = csharpType,
-                    sourceName = identifier.TrimStart('@'),
-                    sourceType = "UNITY",
-                    parentId = "",
-                    scopeParentId = null,
-                    exposeOnFrame = true,
-                    isGroup = false,
-                });
-                targets[identifier.TrimStart('@')] = go;
-                if (isControlRoot) customControlRoots.Add(tr);
-                added++;
-            }
-            return added;
-        }
-
-        static bool IsGeneratedInfrastructure(GameObject go)
-        {
-            if (go == null) return true;
-            return go.GetComponent<FigForgeFrame>() != null
-                || go.GetComponent<FigForgeScreen>() != null
-                || go.GetComponent<FigForgeImportStamp>() != null
-                || go.GetComponent<FigForgePageCompositor>() != null;
-        }
-
-        static bool IsAccessorControlRoot(GameObject go)
-        {
-            if (go == null) return false;
-            return go.GetComponent<Selectable>() != null
-                || go.GetComponent<FigForgeProgress>() != null
-                || go.GetComponent<FigForgeStepper>() != null
-                || go.GetComponent<FigForgeList>() != null
-                || go.GetComponent<FigForgeTable>() != null
-                || go.GetComponent<FigForgeModal>() != null
-                || go.GetComponent<FigForgeToastHost>() != null;
-        }
-
-        static bool TryGetUnityCustomizationType(GameObject go, out string csharpType, out bool isControlRoot)
-        {
-            csharpType = null;
-            isControlRoot = false;
-            if (go == null) return false;
-
-            if (go.GetComponent<FigForgeButton>() != null) { csharpType = "FigForgeButton"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeSwitch>() != null) { csharpType = "FigForgeSwitch"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeToggle>() != null) { csharpType = "FigForgeToggle"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeDropdown>() != null) { csharpType = "FigForgeDropdown"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeInputField>() != null) { csharpType = "FigForgeInputField"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeStepper>() != null) { csharpType = "FigForgeStepper"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeSlider>() != null) { csharpType = "FigForgeSlider"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeProgress>() != null) { csharpType = "FigForgeProgress"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeList>() != null) { csharpType = "FigForgeList"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeTable>() != null) { csharpType = "FigForgeTable"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeModal>() != null) { csharpType = "FigForgeModal"; isControlRoot = true; return true; }
-            if (go.GetComponent<FigForgeToastHost>() != null) { csharpType = "FigForgeToastHost"; isControlRoot = true; return true; }
-
-            if (go.GetComponent<Button>() != null) { csharpType = "Button"; isControlRoot = true; return true; }
-            if (go.GetComponent<Toggle>() != null) { csharpType = "Toggle"; isControlRoot = true; return true; }
-            if (go.GetComponent<TMP_Dropdown>() != null) { csharpType = "TMP_Dropdown"; isControlRoot = true; return true; }
-            if (go.GetComponent<TMP_InputField>() != null) { csharpType = "TMP_InputField"; isControlRoot = true; return true; }
-            if (go.GetComponent<Slider>() != null) { csharpType = "Slider"; isControlRoot = true; return true; }
-            if (go.GetComponent<Scrollbar>() != null) { csharpType = "Scrollbar"; isControlRoot = true; return true; }
-
-            return false;
-        }
-
-        // Stamp every imported control with a FigForgeImportedControl marker, so the manual-control
-        // check can tell imported from hand-added with certainty — the name-keyed registry can't,
-        // since repeated Figma names collapse to one entry (real imported controls then look manual).
-        // Idempotent + migration-safe: stamps only when the frame carries NO markers yet — a fresh
-        // build (all imported) or a legacy frame being migrated (assumed all-imported, true unless
-        // the developer already hand-added a control). A frame already marked is left alone, so
-        // controls added LATER stay unmarked and are correctly flagged.
-        static void EnsureImportMarkers(GameObject frameRoot)
-        {
-            if (frameRoot == null) return;
-            if (frameRoot.GetComponentInChildren<FigForgeImportedControl>(true) != null) return; // already marked
-            foreach (var tr in frameRoot.GetComponentsInChildren<Transform>(true))
-            {
-                var go = tr.gameObject;
-                if (IsGeneratedInfrastructure(go)) continue;
-                if (TryGetUnityCustomizationType(go, out _, out _))
-                    go.AddComponent<FigForgeImportedControl>();
-            }
-        }
-
-        // Controls a developer added to a built frame BY HAND — those WITHOUT the importer's
-        // FigForgeImportedControl marker. A destructive re-Forge rebuilds the frame, so these don't
-        // survive it; we surface them first. A frame with NO markers at all predates this (or hasn't
-        // been re-Forged since) — we can't judge it, so report nothing rather than false-flagging
-        // every imported control (EnsureImportMarkers migrates it on this same Forge).
-        static List<GameObject> CollectUserAddedControls(GameObject frameRoot)
-        {
-            var result = new List<GameObject>();
-            if (frameRoot == null) return result;
-            if (frameRoot.GetComponentInChildren<FigForgeImportedControl>(true) == null) return result;
-
-            var userRoots = new List<Transform>();
-            foreach (var tr in frameRoot.GetComponentsInChildren<Transform>(true))
-            {
-                if (tr == null || tr == frameRoot.transform) continue;
-                var go = tr.gameObject;
-                if (IsGeneratedInfrastructure(go)) continue;                      // FigForge plumbing
-                if (go.GetComponent<FigForgeImportedControl>() != null) continue; // imported → not manual
-                if (IsDescendantOfAny(tr, userRoots)) continue;                   // already counted via its root
-                if (!TryGetUnityCustomizationType(go, out _, out var isRoot)) continue;
-                result.Add(go);
-                if (isRoot) userRoots.Add(tr);
-            }
-            return result;
-        }
-
-        // One consolidated notice covering hand-added controls a Forge touches, split by fate:
-        //   • lost — on a frame being rebuilt/removed → won't survive (a real warning).
-        //   • kept — on a reused (unchanged) frame → preserved, but NOT generated as an accessor
-        //     unless you Forge with Customizations (informational — this is the case people miss:
-        //     the frame is reused, not destroyed, so the control is still there, just not in code).
-        // Returns true to proceed, false to cancel the whole Forge.
-        static bool ReportManualControls(List<(string frame, List<GameObject> controls)> lost,
-                                         List<(string frame, List<GameObject> controls)> kept)
-        {
-            int nLost = 0; foreach (var a in lost) nLost += a.controls.Count;
-            int nKept = 0; foreach (var a in kept) nKept += a.controls.Count;
-            if (nLost == 0 && nKept == 0) return true;
-
-            var lines = new List<string>();
-            if (nLost > 0)
-            {
-                lines.Add("⚠  LOST — on frames being rebuilt/removed, these won't survive:");
-                AppendControls(lines, lost);
-            }
-            if (nKept > 0)
-            {
-                if (lines.Count > 0) lines.Add("");
-                lines.Add("KEPT — the unchanged frame is reused (not destroyed), so these survive, but");
-                lines.Add("they are NOT generated as code accessors. Use “Forge Page with Customizations”");
-                lines.Add("to include them:");
-                AppendControls(lines, kept);
-            }
-            string body = string.Join("\n", lines);
-            Debug.LogWarning($"[FigForge] manual controls detected on Forge:\n{body}");
-
-            string head = nLost > 0
-                ? $"{nLost} manual control(s) will be LOST" + (nKept > 0 ? $" and {nKept} kept-but-unexposed." : ".")
-                : $"{nKept} manual control(s) are kept, but not exposed as code accessors.";
-            string proceed = nLost > 0 ? "Forge anyway" : "Continue";
-            string tail = nLost > 0 ? "\n\nForge anyway? (Cancel leaves the scene untouched.)" : "";
-            return EditorUtility.DisplayDialog("FigForge — manual controls", head + "\n\n" + body + tail, proceed, "Cancel");
-        }
-
-        static void AppendControls(List<string> lines, List<(string frame, List<GameObject> controls)> groups)
-        {
-            foreach (var a in groups)
-            {
-                lines.Add("• " + a.frame + ":");
-                int shown = 0;
-                foreach (var go in a.controls)
-                {
-                    if (shown++ == 10) { lines.Add("      … and " + (a.controls.Count - 10) + " more"); break; }
-                    lines.Add("      – " + go.name);
-                }
-            }
-        }
-
-        // Pre-Forge guard for the whole-page build. Splits hand-added controls by fate:
-        //   • a changed frame is rebuilt → its controls are LOST.
-        //   • a dropped frame is removed → its controls are LOST.
-        //   • an unchanged frame is reused → its controls are KEPT (but not exposed as accessors
-        //     unless Forge-with-Customizations is on, which turns them into accessors).
-        static bool ConfirmPageForge(List<LoadedScreen> loaded, Transform scope, string projectName, bool includeCustomizations)
-        {
-            if (scope == null) return true;
-            var lost = new List<(string, List<GameObject>)>();
-            var kept = new List<(string, List<GameObject>)>();
-            var expected = new HashSet<string>(loaded.Select(s => s.importKey));
-
-            foreach (var s in loaded)
-            {
-                var existing = FindImported(scope, projectName, s.importKey);
-                if (existing == null) continue;
-                var c = CollectUserAddedControls(existing.gameObject);
-                if (c.Count == 0) continue;
-                if (existing.manifestHash == s.manifestHash) kept.Add((existing.screenName, c)); // reused → preserved
-                else lost.Add((existing.screenName, c));                                          // rebuilt → lost
-            }
-            foreach (var stamp in scope.GetComponentsInChildren<FigForgeImportStamp>(true))
-            {
-                if (stamp == null || stamp.projectName != projectName || expected.Contains(stamp.importKey)) continue;
-                var c = CollectUserAddedControls(stamp.gameObject);
-                if (c.Count > 0) lost.Add((stamp.screenName + " (removed)", c));
-            }
-
-            // Forge-with-Customizations turns kept controls INTO accessors, so they need no notice.
-            if (includeCustomizations) kept.Clear();
-            return ReportManualControls(lost, kept);
-        }
-
-        static bool IsDescendantOfAny(Transform tr, List<Transform> roots)
-        {
-            if (tr == null || roots == null || roots.Count == 0) return false;
-            for (int i = 0; i < roots.Count; i++)
-            {
-                var root = roots[i];
-                if (root != null && tr != root && tr.IsChildOf(root)) return true;
-            }
-            return false;
-        }
-
-        static string UniqueIdentifier(string desired, HashSet<string> taken)
-        {
-            if (string.IsNullOrEmpty(desired)) desired = "_";
-            bool escaped = desired.StartsWith("@");
-            string stem = desired.TrimStart('@');
-            string candidate = desired;
-            string key = stem;
-            int suffix = 2;
-            while (taken.Contains(key))
-            {
-                candidate = (escaped ? "@" : "") + stem + suffix++;
-                key = candidate.TrimStart('@');
-            }
-            taken.Add(key);
-            return candidate;
-        }
-
-        static void StretchToParent(GameObject go)
-        {
-            var rt = go.GetComponent<RectTransform>();
-            if (rt == null) return;
-            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
-            rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
-        }
-
-        // Lay a root frame out in an authoring grid (top-left anchored) so the frames
-        // don't overlap in the editor. Runtime UIFrameManager.Show still fills one frame.
-        void SpreadFrame(GameObject page, int index, Manifest m, int columns)
-        {
-            var rt = page.GetComponent<RectTransform>();
-            if (rt == null) return;
-            // Size to the Figma frame in the CANVAS coordinate space (figmaSize * scaleFactor),
-            // matching the CanvasScaler reference. NOT screen.referenceResolution — that is
-            // figmaSize * EXPORT scale (the asset pixel resolution), which at 2x makes the
-            // frame double-size with content stranded in the top-left quarter.
-            float fw = m.screen != null && m.screen.figmaSize != null ? m.screen.figmaSize.w : 1920f;
-            float fh = m.screen != null && m.screen.figmaSize != null ? m.screen.figmaSize.h : 1080f;
-            float sf = fh > 0f ? ReferenceHeight(fh) / fh : 1f;
-            float w = fw * sf;
-            float h = fh * sf;
-            const float gap = 80f;
-            columns = Mathf.Max(1, columns);
-            int col = index % columns;
-            int row = index / columns;
-            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f); // canvas top-left
-            rt.pivot = new Vector2(0f, 1f);
-            rt.sizeDelta = new Vector2(w, h);
-            rt.anchoredPosition = new Vector2(col * (w + gap), -row * (h + gap));
-            EditorUtility.SetDirty(rt);
-            EditorUtility.SetDirty(page);
-        }
-
-        void WarmUpImportedFrames(UIFrameManager mgr)
-        {
-            if (mgr == null) return;
-            var warmed = new HashSet<GameObject>();
-            for (int i = 0; i < mgr.screens.Count; i++)
-            {
-                var frame = mgr.screens[i];
-                if (frame == null || !warmed.Add(frame.gameObject)) continue;
-                HierarchyBuilder.WarmUpGeneratedGraphics(frame.gameObject, _warmUpBatchSize);
-            }
-            Canvas.ForceUpdateCanvases();
-            SceneView.RepaintAll();
-        }
-
-        bool BuildPageProject(string projectPath, bool includeUnityCustomizations = false)
+        bool BuildPageProject(string projectPath)
         {
             _log.Clear();
             FontAutoImporter.ClearCache();
@@ -1499,516 +795,22 @@ namespace FigForge
                     m = m,
                     srcDir = Path.GetDirectoryName(mp),
                     ps = ps,
-                    importKey = ImportKey(ps, m),
-                    manifestHash = ManifestHash(m, ps, _includeGroupsInAccessors, _componentsOnlyAccessors),
                 });
             }
             if (loaded.Count == 0) { Log("no buildable screens in bundle", MessageType.Error); return false; }
-            _manifest = loaded[0].m; // for ResolveCanvas / PanelSettings / header
 
-            try
+            var names = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+            foreach (var screen in loaded)
+                if (!names.Add(SafeName(screen.m.screen.name)))
+                { Log("Duplicate prefab filename in page bundle; rename the frames before exporting.", MessageType.Error); return false; }
+            bool ok = true;
+            foreach (var screen in loaded)
             {
-                if (_backend == UIBackend.UIToolkit) { BuildPageUITK(proj, loaded); return true; }
-
-                var canvas = ResolveCanvas(out bool canvasCreated);
-                if (!canvasCreated && !ConfirmPageForge(loaded, ImportScope(canvas.transform), proj.name, includeUnityCustomizations))
-                { Log("Forge cancelled — manual controls preserved", MessageType.Info); return false; }
-                var mgr = canvas.GetComponent<UIFrameManager>() ?? canvas.gameObject.AddComponent<UIFrameManager>();
-                mgr.editorColumns = _editorColumns;
-                mgr.screens.Clear();
-                RemoveStaleImported(canvas.transform, proj.name, new HashSet<string>(loaded.Select(s => s.importKey)));
-
-                // Declare the full set of frame class names this import will generate so every
-                // per-frame WriteFiles shares one reserved set (sections resolve to a single
-                // nested class) and EndBatch can sweep UIFrames.<Old>.g.cs left by a Figma rename/
-                // remove. Overlays have no frame class (see WriteFiles), so they're excluded —
-                // mirrors BuildModel's className = ToIdentifier(displayName ?? name).
-                var expectedFrameClasses = new HashSet<string>();
-                foreach (var s in loaded)
-                {
-                    if (FrameRoles.IsOverlay(s.ps.role)) continue;
-                    var sc = s.m != null ? s.m.screen : null;
-                    if (sc == null) continue;
-                    expectedFrameClasses.Add(IdentifierUtil.ToIdentifier(
-                        !string.IsNullOrEmpty(sc.displayName) ? sc.displayName : sc.name));
-                }
-                FrameCodeGenDriver.BeginBatch(expectedFrameClasses);
-
-                // 1. Persistent Shells (optional) — one per Section. Screens in the
-                // same Section mount into that shell's Content slot. Shell frames are
-                // registered too, so they can be shown directly like any other frame.
-                var shellContentBySection = new Dictionary<string, Transform>();
-                int shellCount = 0;
-                for (int i = 0; i < loaded.Count; i++)
-                {
-                    if (!FrameRoles.IsShell(loaded[i].ps.role)) continue;
-                    var sh = loaded[i];
-                    string shellKey = sh.ps.section ?? "";
-                    EditorUtility.DisplayProgressBar("FigForge", $"Forging shell {sh.m.screen.name}…", (float)i / loaded.Count);
-                    var shSprites = TextureImportHelper.Import(sh.m, sh.srcDir, $"{_spriteFolder}/{SafeName(sh.m.screen.name)}", _tex);
-                    var shellGo = ReuseOrBuildScreen(sh, proj.name, canvas.transform, shSprites, false, out var shellCtx);
-                    if (shellGo == null) continue;
-
-                    var shellFrame = shellGo.GetComponent<FigForgeFrame>() ?? shellGo.AddComponent<FigForgeFrame>();
-                    shellFrame.isShell = true;
-                    shellFrame.usesShell = false;
-                    shellFrame.shellKey = shellKey;
-                    GenerateAndWireFrame(shellGo, sh.m, shellCtx, shellFrame, sh.ps.section, includeUnityCustomizations);
-                    FigForgeFrameSceneTools.RefreshCompositors(shellGo);
-                    mgr.Register(shellFrame);
-                    shellCount++;
-
-                    if (string.IsNullOrEmpty(shellKey)) continue;
-                    if (shellContentBySection.ContainsKey(shellKey))
-                    {
-                        Log($"multiple Shell frames in Section '{shellKey}' — screens will use the first one.", MessageType.Warning);
-                        continue;
-                    }
-                    var shellContent = FindContentSlot(shellGo);
-                    if (shellContent == null) { Log($"Shell '{sh.m.screen.name}' has no 'Content' slot — screens mount at shell root.", MessageType.Warning); shellContent = shellGo.transform; }
-                    shellContentBySection[shellKey] = shellContent;
-                }
-
-                // 1.5 Overlay layers (optional) — global dialog/notification layers that sit
-                // ABOVE shells and screens and are NEVER swapped by Show(). Authored as a
-                // top-level frame with role=overlay; the FigForgeModals inside become global
-                // Dialogs.<Name>. Not registered with the manager, so it never hides.
-                for (int i = 0; i < loaded.Count; i++)
-                {
-                    if (!FrameRoles.IsOverlay(loaded[i].ps.role)) continue;
-                    var ov = loaded[i];
-                    // An overlay must NEVER be able to abort the screens build — isolate it.
-                    try
-                    {
-                        EditorUtility.DisplayProgressBar("FigForge", $"Forging overlay {ov.m.screen.name}…", (float)i / loaded.Count);
-                        var ovSprites = TextureImportHelper.Import(ov.m, ov.srcDir, $"{_spriteFolder}/{SafeName(ov.m.screen.name)}", _tex);
-                        var ovGo = ReuseOrBuildScreen(ov, proj.name, canvas.transform, ovSprites, false, out var ovCtx);
-                        if (ovGo == null) continue;
-                        // Explicit == null (NOT ??): in the editor GetComponent on a MISSING
-                        // component returns Unity's fake-null stub, which ?? treats as found —
-                        // so AddComponent never runs and the stub throws on first access.
-                        var ovFrame = ovGo.GetComponent<FigForgeFrame>();
-                        if (ovFrame == null) ovFrame = ovGo.AddComponent<FigForgeFrame>();
-                        ovFrame.isShell = false;
-                        ovFrame.usesShell = false;
-                        // Render above everything via a top-sorted nested canvas (just under the
-                        // Toasts host at 32760). Needs its own raycaster so dialog buttons work.
-                        var ovCanvas = ovGo.GetComponent<Canvas>();
-                        if (ovCanvas == null) ovCanvas = ovGo.AddComponent<Canvas>();
-                        ovCanvas.overrideSorting = true;
-                        ovCanvas.sortingOrder = 32750;
-                        if (ovGo.GetComponent<GraphicRaycaster>() == null) ovGo.AddComponent<GraphicRaycaster>();
-                        // Fills the canvas at play-time (it's never UIFrameManager-driven), so its
-                        // dialogs cover the screen wherever the editor spread left the layer.
-                        if (ovGo.GetComponent<FigForgeOverlayLayer>() == null) ovGo.AddComponent<FigForgeOverlayLayer>();
-                        GenerateAndWireFrame(ovGo, ov.m, ovCtx, ovFrame, ov.ps.section, includeUnityCustomizations, isOverlay: true);
-                        FigForgeFrameSceneTools.RefreshCompositors(ovGo);
-                        // Deliberately NOT mgr.Register(ovFrame): overlays are global, not screens.
-                    }
-                    catch (System.Exception ex)
-                    {
-                        Debug.LogError($"[FigForge] overlay '{ov.m.screen.name}' build failed (screens still built): {ex}");
-                        Log($"overlay '{ov.m.screen.name}' build failed: {ex.Message}", MessageType.Error);
-                    }
-                }
-
-                // 2. Screens.
-                int built = 0;
-                for (int i = 0; i < loaded.Count; i++)
-                {
-                    if (FrameRoles.IsShell(loaded[i].ps.role) || FrameRoles.IsOverlay(loaded[i].ps.role)) continue;
-                    var m = loaded[i].m;
-                    // Isolate each screen like the overlay loop above: ONE bad frame must never
-                    // abort the rest of the page — or skip the arrange/finalize that runs AFTER
-                    // this loop (which is what left frames un-arranged when a build threw).
-                    try
-                    {
-                        EditorUtility.DisplayProgressBar("FigForge", $"Forging {m.screen.name}…", (float)i / loaded.Count);
-                        var sprites = TextureImportHelper.Import(m, loaded[i].srcDir, $"{_spriteFolder}/{SafeName(m.screen.name)}", _tex);
-                        string shellKey = loaded[i].ps.section ?? "";
-                        bool usesShell = !string.IsNullOrEmpty(shellKey) && shellContentBySection.ContainsKey(shellKey);
-                        var page = ReuseOrBuildScreen(loaded[i], proj.name, canvas.transform, sprites, false, out var frameCtx);
-                        if (page == null) continue;
-                        var bs = page.GetComponent<FigForgeFrame>() ?? page.AddComponent<FigForgeFrame>();
-                        bs.isShell = false;
-                        bs.usesShell = usesShell;
-                        bs.shellKey = usesShell ? shellKey : "";
-                        GenerateAndWireFrame(page, m, frameCtx, bs, loaded[i].ps.section, includeUnityCustomizations);
-                        FigForgeFrameSceneTools.RefreshCompositors(page);
-                        mgr.Register(bs);
-                        built++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        Debug.LogError($"[FigForge] screen '{m.screen?.name}' build failed (other screens still built): {ex}");
-                        Log($"screen '{m.screen?.name}' build failed: {ex.Message}", MessageType.Error);
-                    }
-                }
-
-                mgr.initialScreen = mgr.Find(proj.initial);
-                var navBinder = canvas.GetComponent<FigForgeNavBinder>() ?? canvas.gameObject.AddComponent<FigForgeNavBinder>();
-                // Pre-wire the manager reference so it's explicit in the Inspector and
-                // the runtime Start() lookup is skipped. The field is a private
-                // [SerializeField] on a runtime-assembly type, so set it via
-                // SerializedObject rather than widening its visibility.
-                var navBinderSO = new SerializedObject(navBinder);
-                navBinderSO.FindProperty("screenManager").objectReferenceValue = mgr;
-                navBinderSO.ApplyModifiedPropertiesWithoutUndo();
-
-                // Editor convenience: keep every imported frame visible/editable.
-                // Runtime Start() still switches to one active frame via Show().
-                foreach (var s in mgr.screens) if (s != null) s.gameObject.SetActive(true);
-                FigForgeFrameSceneTools.ArrangeRootFrames(canvas.GetComponent<FigForgeCanvasHelper>(), false);
-                WarmUpImportedFrames(mgr);
-
-                // Only a canvas THIS import created gets creation-undo (a reused one
-                // must survive Ctrl+Z); freshly-built screens are registered in
-                // ReuseOrBuildScreen, reused ones deliberately not.
-                if (canvasCreated)
-                    Undo.RegisterCreatedObjectUndo(canvas.gameObject, "FigForge Build Page");
-                Undo.SetCurrentGroupName("FigForge Build Page");
-                EditorUtility.SetDirty(canvas);
-                EditorUtility.SetDirty(mgr);
-                UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(
-                    UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
-                var shellSummary = shellCount > 0 ? " + " + shellCount + " shell(s)" : "";
-                var customizationSummary = includeUnityCustomizations ? " with Unity customizations" : "";
-                Log($"built page '{proj.name}'{customizationSummary} — {built} screen(s){shellSummary}, initial '{proj.initial}' ✓", MessageType.Info);
-                return true;
+                try { BuildPrefab(screen.m, screen.srcDir, screen.ps.section, screen.ps.role); }
+                catch (System.Exception ex) { ok = false; Debug.LogException(ex); Log(ex.Message, MessageType.Error); }
             }
-            // Also LogError so the failure shows in the Console even when the importer
-            // window isn't focused (the per-screen inner catches already do this).
-            catch (System.Exception e) { Debug.LogError($"[FigForge] page build failed: {e}"); Log($"page build failed: {e.Message}\n{e.StackTrace}", MessageType.Error); return false; }
-            // EndBatch sweeps orphan UIFrames.<Old>.g.cs and clears the shared reserved set. In the
-            // finally so a mid-import throw can't leave the batch open (which would make the NEXT
-            // single-frame import wrongly think it's still in a full run).
-            finally { FrameCodeGenDriver.EndBatch(); EditorUtility.ClearProgressBar(); AssetDatabase.SaveAssets(); }
-        }
-
-        void BuildPageUITK(ProjectData proj, List<LoadedScreen> loaded)
-        {
-            var panel = ResolvePanelSettings();
-            var go = new GameObject("FigForge UI", typeof(UnityEngine.UIElements.UIDocument));
-            var doc = go.GetComponent<UnityEngine.UIElements.UIDocument>();
-            if (panel != null) doc.panelSettings = panel;
-            var mgr = go.AddComponent<UIScreenManager>();
-
-            int built = 0;
-            for (int i = 0; i < loaded.Count; i++)
-            {
-                var m = loaded[i].m;
-                ApplyManifestSettings(m);
-                EditorUtility.DisplayProgressBar("FigForge", $"Generating {m.screen.name}…", (float)i / loaded.Count);
-                var sprites = TextureImportHelper.Import(m, loaded[i].srcDir, $"{_spriteFolder}/{SafeName(m.screen.name)}", _tex);
-                var ctx = new UITKContext
-                {
-                    outFolder = _uitkOutFolder, sprites = sprites, log = mm => Log(mm, MessageType.Warning),
-                    resolveFontPath = (fam, sty) =>
-                    {
-                        var fa = ResolveFontAsset(fam, sty);
-                        return new TMP_FontAssetRef { assetPath = fa != null ? AssetDatabase.GetAssetPath(fa) : null };
-                    },
-                };
-                var res = UxmlBuilder.Build(m, ctx);
-                var vta = AssetDatabase.LoadAssetAtPath<UnityEngine.UIElements.VisualTreeAsset>(res.uxmlPath);
-                if (vta != null) { mgr.Register(m.screen.name, vta); built++; }
-            }
-            mgr.initialScreen = mgr.pages.Find(p => p != null && p.name == proj.initial)?.tree;
-            Undo.RegisterCreatedObjectUndo(go, "FigForge Build Page");
-            UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(
-                UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
-            Log($"built UITK page '{proj.name}' — {built} screen(s) ✓", MessageType.Info);
-        }
-
-        // ---- UI Toolkit backend ------------------------------------------------
-        void BuildUITK()
-        {
-            try
-            {
-                ApplyManifestSettings(_manifest);
-                EditorUtility.DisplayProgressBar("FigForge", "Importing assets…", 0.15f);
-                var sourceDir = Path.GetDirectoryName(_manifestPaths[_selected]);
-                var screenFolder = $"{_spriteFolder}/{SafeName(_manifest.screen.name)}";
-                var sprites = TextureImportHelper.Import(_manifest, sourceDir, screenFolder, _tex);
-                Log($"imported {sprites.Count} sprite(s)", MessageType.Info);
-
-                EditorUtility.DisplayProgressBar("FigForge", "Generating UXML + USS…", 0.55f);
-                var ctx = new UITKContext
-                {
-                    outFolder = _uitkOutFolder,
-                    sprites = sprites,
-                    resolveFontPath = (fam, sty) =>
-                    {
-                        var fa = ResolveFontAsset(fam, sty);
-                        return new TMP_FontAssetRef { assetPath = fa != null ? AssetDatabase.GetAssetPath(fa) : null };
-                    },
-                    log = m => Log(m, MessageType.Warning),
-                };
-
-                var res = UxmlBuilder.Build(_manifest, ctx);
-                Log($"wrote {res.uxmlPath} (+ .uss), {res.elementCount} elements", MessageType.Info);
-
-                if (_uitkCreateDoc)
-                    CreateUIDocument(res);
-
-                Log($"built '{_manifest.screen.name}' (UI Toolkit) ✓", MessageType.Info);
-            }
-            catch (System.Exception e)
-            {
-                Log($"UITK build failed: {e.Message}\n{e.StackTrace}", MessageType.Error);
-            }
-            finally
-            {
-                EditorUtility.ClearProgressBar();
-                AssetDatabase.SaveAssets();
-                AssetDatabase.Refresh();
-            }
-        }
-
-        void CreateUIDocument(UxmlResult res)
-        {
-            var vta = AssetDatabase.LoadAssetAtPath<UnityEngine.UIElements.VisualTreeAsset>(res.uxmlPath);
-            if (vta == null) { Log("could not load generated UXML as VisualTreeAsset", MessageType.Warning); return; }
-
-            var panel = ResolvePanelSettings();
-
-            // Reuse an existing FigForge UIDocument when building a connected scene.
-            var existing = Object.FindObjectsByType<UnityEngine.UIElements.UIDocument>(FindObjectsSortMode.None)
-                .FirstOrDefault(d => d.GetComponent<UIScreenManager>() != null || d.name == "FigForge UI");
-
-            GameObject go;
-            UnityEngine.UIElements.UIDocument doc;
-            bool createdDoc = false;
-            if (_connectedScene && existing != null) { doc = existing; go = existing.gameObject; }
-            else
-            {
-                go = new GameObject("FigForge UI", typeof(UnityEngine.UIElements.UIDocument));
-                doc = go.GetComponent<UnityEngine.UIElements.UIDocument>();
-                createdDoc = true;
-            }
-            if (panel != null) doc.panelSettings = panel;
-
-            if (_connectedScene)
-            {
-                var mgr = go.GetComponent<UIScreenManager>() ?? go.AddComponent<UIScreenManager>();
-                mgr.Register(_manifest.screen.name, vta);
-                Log($"registered UITK page '{_manifest.screen.name}' on UIScreenManager", MessageType.Info);
-            }
-            else
-            {
-                doc.visualTreeAsset = vta;
-            }
-
-            if (createdDoc) // a reused UIDocument must survive Ctrl+Z
-                Undo.RegisterCreatedObjectUndo(go, "FigForge UITK Build");
-            EditorUtility.SetDirty(go);
-            UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(
-                UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene());
-        }
-
-        UnityEngine.UIElements.PanelSettings ResolvePanelSettings()
-        {
-            const string path = "Assets/FigForge/FigForgePanelSettings.asset";
-            var existing = AssetDatabase.LoadAssetAtPath<UnityEngine.UIElements.PanelSettings>(path);
-            if (existing != null) return existing;
-
-            var panel = ScriptableObject.CreateInstance<UnityEngine.UIElements.PanelSettings>();
-            // Scale like a CanvasScaler "match height" so figma-px coords map across resolutions.
-            panel.scaleMode = UnityEngine.UIElements.PanelScaleMode.ScaleWithScreenSize;
-            float fw = _manifest.screen.figmaSize != null ? _manifest.screen.figmaSize.w : 1920f;
-            float fh = _manifest.screen.figmaSize != null ? _manifest.screen.figmaSize.h : 1080f;
-            panel.referenceResolution = new Vector2Int(Mathf.RoundToInt(fw), Mathf.RoundToInt(fh));
-            panel.match = 1f;
-
-            // A PanelSettings needs a theme; grab any ThemeStyleSheet in the project.
-            var themeGuid = AssetDatabase.FindAssets("t:ThemeStyleSheet");
-            if (themeGuid.Length > 0)
-            {
-                var theme = AssetDatabase.LoadAssetAtPath<UnityEngine.UIElements.ThemeStyleSheet>(
-                    AssetDatabase.GUIDToAssetPath(themeGuid[0]));
-                if (theme != null) panel.themeStyleSheet = theme;
-            }
-            else
-            {
-                Log("No ThemeStyleSheet found — assign one to FigForgePanelSettings (Assets ▸ Create ▸ UI Toolkit ▸ TSS Theme File).", MessageType.Warning);
-            }
-
-            TextureImportHelper.EnsureFolder("Assets/FigForge");
-            AssetDatabase.CreateAsset(panel, path);
             AssetDatabase.SaveAssets();
-            return panel;
-        }
-
-        // First canvas in the open scene — prefers a root FigForge one (Camera or Overlay).
-        static Canvas FirstSceneCanvas()
-        {
-            var all = Object.FindObjectsByType<Canvas>(FindObjectsSortMode.InstanceID);
-            return all.FirstOrDefault(c => c.transform.parent == null && IsFigForgeCanvasMode(c.renderMode))
-                ?? all.FirstOrDefault();
-        }
-
-        // Render modes FigForge uses for a page canvas. Screen Space - Camera is the
-        // default (lets the blend compositor capture the page to a RenderTexture); Overlay
-        // is still accepted so older scenes reuse their existing canvas on re-import.
-        static bool IsFigForgeCanvasMode(RenderMode mode)
-            => mode == RenderMode.ScreenSpaceCamera || mode == RenderMode.ScreenSpaceOverlay;
-
-        // `created` reports whether THIS call made the canvas — undo registration
-        // must only cover objects the import created (registering a reused canvas
-        // for creation-undo would have Ctrl+Z destroy the user's canvas).
-        Canvas ResolveCanvas(out bool created)
-        {
-            EnsureEventSystem(); // always — even when an existing canvas is reused
-            var canvas = ResolveCanvasObject(out created);
-            // Always render the FigForge page through the dedicated FigForge camera (Screen
-            // Space - Camera), UPGRADING a reused Overlay canvas too. Overlay can't be captured
-            // by the blend compositor, and in the Scene view it renders at screen-pixel scale
-            // (content shrinks into a corner) — Camera mode is consistent in edit + play.
-            ConfigureCanvasForCamera(canvas);
-            EnsureCanvasHelper(canvas);
-            return canvas;
-        }
-
-        static void EnsureCanvasHelper(Canvas canvas)
-        {
-            if (canvas == null) return;
-            if (canvas.GetComponent<FigForgeCanvasHelper>() != null) return;
-            canvas.gameObject.AddComponent<FigForgeCanvasHelper>();
-            EditorUtility.SetDirty(canvas.gameObject);
-        }
-
-        Canvas ResolveCanvasObject(out bool created)
-        {
-            created = false;
-            if (!_newCanvas && _existingCanvas != null) return _existingCanvas;
-
-            var existing = Object.FindObjectsByType<Canvas>(FindObjectsSortMode.None)
-                .FirstOrDefault(c => c.transform.parent == null && IsFigForgeCanvasMode(c.renderMode));
-            if (!_newCanvas && existing != null) return existing;
-            if (_connectedScene && existing != null && existing.GetComponent<UIFrameManager>() != null) return existing;
-
-            created = true;
-            var go = new GameObject("FigForge Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
-            var canvas = go.GetComponent<Canvas>();
-            canvas.pixelPerfect = true;
-            var scaler = go.GetComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            float rh = ReferenceHeight(_manifest.screen.figmaSize.h);
-            scaler.referenceResolution = new Vector2(
-                _manifest.screen.figmaSize.w * (rh / Mathf.Max(1f, _manifest.screen.figmaSize.h)), rh);
-            scaler.matchWidthOrHeight = 0.5f;
-            return canvas;
-        }
-
-        // Point a FigForge page canvas at the dedicated FigForge camera in Screen Space -
-        // Camera mode. Idempotent — also upgrades a reused Overlay canvas.
-        static void ConfigureCanvasForCamera(Canvas canvas)
-        {
-            if (canvas == null) return;
-            canvas.renderMode = RenderMode.ScreenSpaceCamera;
-            canvas.pixelPerfect = true;
-            var scaler = canvas.GetComponent<CanvasScaler>();
-            float refH = scaler != null && scaler.referenceResolution.y > 1f ? scaler.referenceResolution.y : 1080f;
-            canvas.worldCamera = EnsureFigForgeCamera(refH);
-            canvas.planeDistance = 100f;
-        }
-
-        // A dedicated orthographic camera FigForge owns — so it never hijacks or fights the
-        // scene's main camera. If another camera already exists it OVERLAYS it (clears depth
-        // only, higher depth) so the existing scene/skybox shows behind the UI; if FigForge's
-        // is the only camera it clears to a solid background. Reused if already present.
-        static Camera EnsureFigForgeCamera(float refHeight)
-        {
-            const string camName = "FigForge Camera";
-            var all = Object.FindObjectsByType<Camera>(FindObjectsSortMode.InstanceID);
-            var cam = all.FirstOrDefault(c => c.name == camName);
-            bool otherCamera = all.Any(c => c != cam && c.name != camName);
-
-            if (cam == null)
-                cam = new GameObject(camName, typeof(Camera)).GetComponent<Camera>();
-
-            cam.orthographic = true;
-            // Pixel-matched: ortho half-height = reference half-height, so the canvas (and a
-            // figmaSize frame) is 1 world unit per reference pixel — large + workable in the
-            // Scene view. Screen Space - Camera still fills the viewport in play, so the
-            // rendered result is unchanged; only the world size differs.
-            cam.orthographicSize = Mathf.Max(1f, refHeight * 0.5f);
-            cam.cullingMask = ~0;                       // everything; a UI-only scene draws just the UI
-            cam.clearFlags = otherCamera ? CameraClearFlags.Depth : CameraClearFlags.SolidColor;
-            cam.backgroundColor = new Color(0.1f, 0.1f, 0.12f, 1f);
-            cam.depth = 100f;                           // render on top of the scene camera
-            cam.nearClipPlane = 0.1f;
-            cam.farClipPlane = 1000f;
-            cam.transform.position = new Vector3(0f, 0f, -10f);
-            cam.transform.rotation = Quaternion.identity;
-            return cam;
-        }
-
-        // An EventSystem with the RIGHT input module, or buttons never react. On a
-        // project whose Active Input Handling is "Input System Package" (new), the
-        // legacy StandaloneInputModule throws every frame and nothing is clickable;
-        // the Input System needs InputSystemUIInputModule WITH its default actions
-        // assigned (a bare AddComponent leaves them null → no pointer input at all).
-        // Done via reflection so the importer keeps NO hard dependency on the Input
-        // System package — legacy-only projects fall back to StandaloneInputModule.
-        // Also repairs an existing mis-configured EventSystem (e.g. one left with the
-        // legacy module, or an Input System module with no actions).
-        static void EnsureEventSystem()
-        {
-            var found = Object.FindObjectsByType<UnityEngine.EventSystems.EventSystem>(FindObjectsSortMode.None);
-            var es = found.Length > 0 ? found[0] : null;
-            if (es == null)
-                es = new GameObject("EventSystem", typeof(UnityEngine.EventSystems.EventSystem))
-                    .GetComponent<UnityEngine.EventSystems.EventSystem>();
-            var go = es.gameObject;
-
-            var ismType = FindType("UnityEngine.InputSystem.UI.InputSystemUIInputModule");
-            if (ismType != null)
-            {
-                // Input System present → it's the safe choice for "new" and "both".
-                var legacy = go.GetComponent<UnityEngine.EventSystems.StandaloneInputModule>();
-                if (legacy != null) Object.DestroyImmediate(legacy);
-
-                bool added = go.GetComponent(ismType) == null;
-                var ism = go.GetComponent(ismType) as Behaviour ?? go.AddComponent(ismType) as Behaviour;
-                bool assigned = AssignDefaultUiActions(ismType, ism);
-                if (added || legacy != null || assigned)
-                    Debug.Log("[FigForge] EventSystem → InputSystemUIInputModule with default actions"
-                        + (legacy != null ? " (replaced legacy StandaloneInputModule)." : "."));
-            }
-            else if (go.GetComponent<UnityEngine.EventSystems.BaseInputModule>() == null)
-            {
-                go.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
-            }
-        }
-
-        static System.Type FindType(string fullName)
-        {
-            var t = System.Type.GetType(fullName);
-            if (t != null) return t;
-            foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
-            {
-                t = asm.GetType(fullName);
-                if (t != null) return t;
-            }
-            return null;
-        }
-
-        // Wire the Input System UI module's default actions (Point/LeftClick/…) when
-        // none are assigned — otherwise the module reads no device and the UI is dead.
-        // Respect a user-assigned actions asset. Reflection-only (no package dep).
-        static bool AssignDefaultUiActions(System.Type ismType, object ism)
-        {
-            if (ism == null) return false;
-            try
-            {
-                var assetProp = ismType.GetProperty("actionsAsset");
-                if (assetProp != null && assetProp.GetValue(ism) != null) return false; // user already wired actions
-                var assign = ismType.GetMethod("AssignDefaultActions", System.Type.EmptyTypes);
-                if (assign != null) { assign.Invoke(ism, null); return true; }
-            }
-            catch { /* older Input System without AssignDefaultActions — best effort */ }
-            return false;
+            return ok;
         }
 
         float ReferenceHeight(float figmaH)
@@ -2022,15 +824,6 @@ namespace FigForge
             }
         }
 
-        void SavePrefab(GameObject page)
-        {
-            TextureImportHelper.EnsureFolder(_prefabFolder);
-            var path = $"{_prefabFolder}/{SafeName(_manifest.screen.name)}.prefab";
-            PrefabUtility.SaveAsPrefabAsset(page, path);
-            Log($"saved prefab → {path}", MessageType.Info);
-        }
-
-        // ---- helpers -----------------------------------------------------------
         void Log(string msg, MessageType kind) => _log.Add((msg, kind));
         static string SafeName(string s) => new string((s ?? "Screen").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
 

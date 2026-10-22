@@ -99,7 +99,7 @@ export function isCanonicalName(name: string): boolean {
 // A container marked pass-through is SKIPPED by the generator: it never becomes
 // a GameObject, and its children are promoted to the nearest surviving ancestor.
 // Detected on the RAW (un-sanitized) layer name so it works headlessly and in
-// page/MCP exports without any UI state:
+// page exports without any UI state:
 //   • a leading '~' marker   →  "~Wrapper", "~ spacer"
 //   • a leading word         →  "unwrap row", "passthrough / group", "pass-through"
 // The leading-token rule mirrors the canonical KIND-tag convention above; the

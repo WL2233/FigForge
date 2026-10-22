@@ -3,7 +3,7 @@
   "displayName": "FigForge Unity Importer",
   "version": "1.0.59",
   "unity": "2022.3",
-  "description": "Imports FigForge exports (manifest.json + PNGs) into Unity uGUI: constraint-driven anchors, gradients, strokes, rotation, rounded panels, canonical UI elements, and connected multi-page scenes.",
+  "description": "Imports FigForge exports (manifest.json + PNGs) into Unity uGUI: constraint-driven anchors, gradients, strokes, rotation, rounded panels, canonical UI elements, and prefab assets.",
   "keywords": ["figma", "ui", "ugui", "importer", "figforge"],
   "dependencies": {
     "com.unity.ugui": "1.0.0",

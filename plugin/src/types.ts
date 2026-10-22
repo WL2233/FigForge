@@ -11,8 +11,8 @@ export const MANIFEST_SCHEMA = 'figforge/manifest';
 // Manifest wire-format version — counterpart: unity/Editor/ManifestParser.cs
 // (SupportedManifestVersions). The importer hard-fails on a version it doesn't
 // know, so bump this ONLY together with that list.
-//   1.0 — assets as JSON number[] on the live-import wire
-//   2.0 — assets as base64 strings (`b64`) on the live-import/MCP wire,
+//   1.0 — original manifest contract
+//   2.0 — manifest contract revision,
 //         manifest carries `canonicalSchema`
 export const MANIFEST_VERSION = '2.0';
 // Canonical-control capture generation this plugin emits — counterpart:
@@ -429,11 +429,7 @@ export interface ManifestAsset {
   scale: number;
 }
 
-/** A rendered PNG travelling through the plugin (exporter → main → ui).
- * Kept as Uint8Array end-to-end: a number[] of the same bytes costs ~10× the
- * JS heap and structured-clones/stringifies proportionally. Only at the JSON
- * wire boundary to Unity (live-import POST / MCP bridge) do the bytes become
- * a base64 string — see bytesToBase64 in base64.ts. */
+/** PNG bytes remain Uint8Array from exporter to ZIP packaging. */
 export interface BinaryAsset {
   name: string;
   data: Uint8Array;

@@ -6,14 +6,12 @@
 // (FigForgeScreen) via the generated __WireFrame override.
 //
 // Runs on every script reload but is cheap + idempotent: a frame is upgraded once,
-// the first reload after its generated type exists. (Scene frames only for now;
-// prefab-asset frames are skipped — a follow-up.)
+// the first reload after its generated type exists. Pending prefab paths survive reloads.
 // =============================================================================
 
 using System;
 using UnityEditor;
 using UnityEditor.Callbacks;
-using UnityEditor.SceneManagement;
 using UnityEngine;
 
 namespace FigForge
@@ -42,73 +40,62 @@ namespace FigForge
             EditorApplication.delayCall += () => { _pending = false; UpgradePendingFrames(); };
         }
 
-        static void UpgradePendingFrames()
+        const string PendingPrefabsKey = "FigForge.PendingPrefabWiring";
+
+        internal static void QueuePrefab(string path)
         {
-            // Groups first: swap each group placeholder for its generated component so a frame's
-            // ref to a group component resolves when the frame wires below.
-            UpgradePendingGroups();
-
-            var frames = Resources.FindObjectsOfTypeAll<FigForgeFrame>();
-            bool any = false;
-            var managers = new System.Collections.Generic.HashSet<UIFrameManager>();
-            var roots = new System.Collections.Generic.List<GameObject>();
-            foreach (var f in frames)
-            {
-                if (f == null) continue;
-                if (f.GetType() != typeof(FigForgeFrame)) continue;   // already the generated subclass
-                if (string.IsNullOrEmpty(f.generatedType)) continue;  // no generated frame for this page
-                if (!f.gameObject.scene.IsValid()) continue;          // skip prefab assets / non-scene objects
-
-                var t = ResolveType(f.generatedType);
-                if (t == null || !typeof(FigForgeFrame).IsAssignableFrom(t)) continue; // not compiled yet
-
-                if (UpgradeFrame(f, t, out var manager, out var upgraded))
-                {
-                    any = true;
-                    if (manager != null) managers.Add(manager);
-                    if (upgraded != null) roots.Add(upgraded.gameObject);
-                }
-            }
-            if (!any) return;
-
-            foreach (var manager in managers)
-                if (manager != null)
-                    EditorUtility.SetDirty(manager);
-
-            int batchSize = FigForgeImporterWindow.WarmUpBatchSizePref;
-            foreach (var root in roots)
-                HierarchyBuilder.WarmUpGeneratedGraphics(root, batchSize);
-
-            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            var paths = new System.Collections.Generic.HashSet<string>(
+                SessionState.GetString(PendingPrefabsKey, "").Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries));
+            paths.Add(path);
+            SessionState.SetString(PendingPrefabsKey, string.Join("\n", paths));
+            RequestUpgrade();
         }
 
-        // Swap each group placeholder (a plain FigForgeFrameElement carrying a generatedType)
-        // for its generated subclass, then wire every group's child refs in a second pass —
-        // once all group components exist, so a group's ref to a nested child group resolves
-        // regardless of the order they were upgraded in.
-        static void UpgradePendingGroups()
+        static void UpgradePendingFrames()
         {
-            var elements = Resources.FindObjectsOfTypeAll<FigForgeFrameElement>();
-            var upgraded = new System.Collections.Generic.List<FigForgeFrameElement>();
-            foreach (var el in elements)
+            if (EditorApplication.isCompiling || EditorApplication.isUpdating)
             {
-                if (el == null) continue;
-                if (el.GetType() != typeof(FigForgeFrameElement)) continue;   // already the generated subclass
-                if (string.IsNullOrEmpty(el.generatedType)) continue;          // no generated group for this element
-                if (!el.gameObject.scene.IsValid()) continue;                 // skip prefab assets / non-scene objects
-
-                var t = ResolveType(el.generatedType);
-                if (t == null || !typeof(FigForgeFrameElement).IsAssignableFrom(t)) continue; // not compiled yet
-
-                var comp = UpgradeGroup(el, t);
-                if (comp != null) upgraded.Add(comp);
+                RequestUpgrade();
+                return;
             }
-            foreach (var g in upgraded)
+            var pending = SessionState.GetString(PendingPrefabsKey, "").Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var remaining = new System.Collections.Generic.List<string>();
+            foreach (var path in pending)
             {
-                if (g == null) continue;
-                g.__WireGroup(g.GetComponentInParent<FigForgeScreen>(true));
-                EditorUtility.SetDirty(g);
+                if (AssetDatabase.LoadAssetAtPath<GameObject>(path) == null) continue;
+                GameObject root = null;
+                try
+                {
+                    root = PrefabUtility.LoadPrefabContents(path);
+                    bool ready = true;
+                    foreach (var group in root.GetComponentsInChildren<FigForgeFrameElement>(true))
+                        if (!string.IsNullOrEmpty(group.generatedType) && ResolveType(group.generatedType) == null) ready = false;
+                    foreach (var frame in root.GetComponentsInChildren<FigForgeFrame>(true))
+                        if (!string.IsNullOrEmpty(frame.generatedType) && ResolveType(frame.generatedType) == null) ready = false;
+                    if (!ready) { remaining.Add(path); continue; }
+
+                    foreach (var group in root.GetComponentsInChildren<FigForgeFrameElement>(true))
+                        if (group.GetType() == typeof(FigForgeFrameElement) && !string.IsNullOrEmpty(group.generatedType))
+                            if (UpgradeGroup(group, ResolveType(group.generatedType)) == null)
+                                throw new InvalidOperationException("Could not upgrade prefab group: " + path);
+                    foreach (var group in root.GetComponentsInChildren<FigForgeFrameElement>(true))
+                        group.__WireGroup(group.GetComponentInParent<FigForgeScreen>(true));
+                    foreach (var frame in root.GetComponentsInChildren<FigForgeFrame>(true))
+                    {
+                        if (frame.GetType() == typeof(FigForgeFrame) && !string.IsNullOrEmpty(frame.generatedType))
+                        {
+                            if (!UpgradeFrame(frame, ResolveType(frame.generatedType), out _, out _))
+                                throw new InvalidOperationException("Could not upgrade prefab frame: " + path);
+                        }
+                        else frame.__WireFrame(frame.GetComponent<FigForgeScreen>());
+                    }
+                    if (PrefabUtility.SaveAsPrefabAsset(root, path) == null)
+                        throw new System.IO.IOException("Could not save wired prefab: " + path);
+                }
+                catch (Exception ex) { remaining.Add(path); Debug.LogException(ex); }
+                finally { if (root != null) PrefabUtility.UnloadPrefabContents(root); }
             }
+            SessionState.SetString(PendingPrefabsKey, string.Join("\n", remaining));
         }
 
         static FigForgeFrameElement UpgradeGroup(FigForgeFrameElement baseEl, Type t)

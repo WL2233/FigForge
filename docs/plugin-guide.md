@@ -8,11 +8,10 @@ browser). Build with `npm run build` in `plugin/`, then import
 
 It's a single page — no tabs.
 
-- **Header** — logo, version, window size presets (S / M / L), the **MCP toggle** (a connect/disconnect control with a live status dot: grey = off, amber = connecting, green = connected), and minimize.
+- **Header** — logo, version, window size presets (S / M / L), and minimize.
 - **Body** — toolbar (scale + options), layer tree (left), live preview (right), and the export button.
 
-Click the MCP control to start/stop the bridge connection; while on, it
-auto-reconnects, so the dot goes green as soon as the bridge server is up.
+Download Frame exports one frame; Download Page exports a ZIP containing all frames.
 
 ## Export options
 

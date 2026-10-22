@@ -1,8 +1,7 @@
 // =============================================================================
 // FigForge — plugin main thread (Figma sandbox)
 //
-// Owns the document: builds the layer tree for the UI, runs exports, and serves
-// MCP requests forwarded by the UI from the bridge server.
+// Owns the document: builds the layer tree for the UI and runs ZIP exports.
 // =============================================================================
 
 import {
@@ -14,7 +13,6 @@ import {
   type ExportOptions,
   type ExportScale,
 } from './types';
-import { bytesToBase64 } from './base64';
 import { buildTree, canMerge, detectCanonical, isExportable, mainComponentOf } from './traverser';
 import { exportDesign } from './exporter';
 import { sanitize } from './naming';
@@ -29,10 +27,8 @@ const WINDOW_PRESETS: Record<string, { w: number; h: number }> = {
 figma.showUI(__html__, { width: WINDOW_PRESETS.M.w, height: WINDOW_PRESETS.M.h, themeColors: true });
 
 // Under manifest "documentAccess": "dynamic-page", reading a non-current page's
-// .children / findAll throws unless its pages are loaded first. Cross-page
-// traversal (findMaster, parkMaster, listFrameRecords, upgradeAllListMasters,
-// the COMPONENTS_PAGE fallbacks) all run downstream of a UI message or MCP
-// request, so we load every page once at startup and gate the message handler
+// .children / findAll throws unless its pages are loaded first. We load every
+// page once at startup and gate the message handler
 // on that promise. (Loading does NOT make figma.getNodeById legal — those call
 // sites use getNodeByIdAsync.)
 const pagesLoaded: Promise<void> = figma.loadAllPagesAsync();
@@ -91,9 +87,8 @@ void pushSelection();
 
 // One export at a time. exportDesign isolates layers by MUTATING node.visible
 // around each exportAsync call; a second export started mid-run interleaves with
-// the first pass and each bakes the other's hidden layers into its PNGs. Every
-// entry point that runs exportDesign ('export', 'export-page', MCP export_unity)
-// checks this flag and rejects a concurrent request with a visible message —
+// the first pass and each bakes the other's hidden layers into its PNGs. Each
+// export checks this flag and rejects a concurrent request with a visible message —
 // never queued silently (the selection/configs may be stale by completion time,
 // so the user should re-trigger deliberately). Cleared in `finally` on every path.
 let exportInFlight = false;
@@ -126,8 +121,7 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
     }
     return;
   }
-  // All cross-page traversal runs from here (directly or via handleMcp), so wait
-  // for every page to be loaded before handling any message (see startup note).
+  // Wait for every page to load before handling document messages.
   await pagesLoaded;
   switch (msg.type) {
     case 'reload':
@@ -216,10 +210,6 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
         );
         figma.ui.postMessage({
           type: 'export-complete',
-          // Echo the click-time destination (zip download vs Unity POST) so the UI
-          // routes THIS export's result — a module global in ui.ts would be
-          // re-routed by a second (rejected) click while this one was running.
-          target: (msg.target as string) || 'zip',
           manifest: JSON.stringify(result.manifest, null, 2),
           assets: result.assets,
         });
@@ -301,7 +291,6 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
         const firstScreen = screens.find((s) => s.role !== 'shell' && s.role !== 'overlay') || screens[0];
         figma.ui.postMessage({
           type: 'export-page-complete',
-          target: (msg.target as string) || 'zip', // click-time destination, echoed — see 'export'
           project: { name: figma.currentPage.name, initial: firstScreen ? firstScreen.name : '' },
           screens,
         });
@@ -380,17 +369,13 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
         const result = await createShellScaffold((msg as { shellOpts?: Partial<ShellOptions> }).shellOpts);
         figma.ui.postMessage({
           type: 'status',
-          message: `Shell scaffold created: ${result.section.name} with ${result.screens.length} sample screens. Export Page or Send Page to Unity to build it as a connected shell.`,
+          message: `Shell scaffold created: ${result.section.name} with ${result.screens.length} sample screens. Download Page to export its frames as a ZIP bundle.`,
         });
       } catch (e) {
         figma.ui.postMessage({ type: 'export-error', message: 'Create shell failed: ' + String((e as Error)?.message || e) });
       }
       break;
     }
-
-    case 'mcp-request':
-      await handleMcp(msg.payload as McpRequest);
-      break;
 
     case 'cancel':
       figma.closePlugin();
@@ -454,612 +439,7 @@ async function sendPreview(nodeId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// MCP request handling (forwarded from the bridge via the UI WebSocket)
 // ---------------------------------------------------------------------------
-interface McpRequest {
-  type: string;
-  requestId: string;
-  nodeIds?: string[];
-  params?: Record<string, unknown>;
-}
-
-function finiteNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function rgba(color: RGB | RGBA, opacity?: number): [number, number, number, number] {
-  const alpha = 'a' in color ? color.a : 1;
-  return [color.r, color.g, color.b, opacity === undefined ? alpha : alpha * opacity];
-}
-
-function flattenMatrix(matrix: Transform | undefined): number[] | undefined {
-  return matrix ? ([] as number[]).concat(...matrix) : undefined;
-}
-
-function serializePaint(paint: Paint): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    type: paint.type,
-    visible: paint.visible !== false,
-  };
-  if (typeof paint.opacity === 'number') out.opacity = paint.opacity;
-  if (paint.type === 'SOLID') {
-    out.color = rgba(paint.color, paint.opacity);
-  } else if (paint.type.startsWith('GRADIENT')) {
-    const gradient = paint as GradientPaint;
-    out.gradientStops = gradient.gradientStops.map((stop) => ({
-      position: stop.position,
-      color: rgba(stop.color, paint.opacity),
-    }));
-    out.gradientTransform = flattenMatrix(gradient.gradientTransform);
-  } else if (paint.type === 'IMAGE') {
-    const image = paint as ImagePaint;
-    out.imageHash = image.imageHash || undefined;
-    out.scaleMode = image.scaleMode;
-    out.rotation = finiteNumber(image.rotation);
-    out.imageTransform = flattenMatrix(image.imageTransform);
-    out.scalingFactor = finiteNumber(image.scalingFactor);
-  } else if (paint.type === 'VIDEO') {
-    out.videoHash = (paint as VideoPaint).videoHash || undefined;
-  }
-  return out;
-}
-
-function serializePaints(value: unknown): unknown[] | undefined {
-  return Array.isArray(value) ? value.map((paint) => serializePaint(paint as Paint)) : undefined;
-}
-
-function serializeEffects(value: unknown): unknown[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return (value as Effect[]).map((effect) => {
-    const out: Record<string, unknown> = {
-      type: effect.type,
-      visible: effect.visible !== false,
-    };
-    if (effect.type === 'DROP_SHADOW' || effect.type === 'INNER_SHADOW') {
-      const shadow = effect as DropShadowEffect & { spread?: number };
-      out.color = rgba(shadow.color);
-      out.offset = shadow.offset;
-      out.radius = shadow.radius;
-      out.spread = shadow.spread;
-      out.blendMode = shadow.blendMode;
-      if (effect.type === 'DROP_SHADOW') out.showShadowBehindNode = shadow.showShadowBehindNode === true;
-    } else if (effect.type === 'LAYER_BLUR' || effect.type === 'BACKGROUND_BLUR') {
-      out.radius = (effect as BlurEffect).radius;
-    }
-    return out;
-  });
-}
-
-function serializeFontName(fontName: FontName | PluginAPI['mixed']): unknown {
-  return fontName === figma.mixed ? 'mixed' : { family: fontName.family, style: fontName.style };
-}
-
-function serializeText(node: TextNode): Record<string, unknown> {
-  const text: Record<string, unknown> = {
-    characters: node.characters,
-    fontName: serializeFontName(node.fontName),
-    fontSize: node.fontSize === figma.mixed ? 'mixed' : node.fontSize,
-    textAlignHorizontal: node.textAlignHorizontal,
-    textAlignVertical: node.textAlignVertical,
-    textAutoResize: node.textAutoResize,
-  };
-  if (node.lineHeight !== figma.mixed) text.lineHeight = node.lineHeight;
-  if (node.letterSpacing !== figma.mixed) text.letterSpacing = node.letterSpacing;
-  if (node.paragraphSpacing !== figma.mixed) text.paragraphSpacing = node.paragraphSpacing;
-  return text;
-}
-
-function pickLayout(node: BaseNode): Record<string, unknown> | undefined {
-  const n = node as unknown as Record<string, unknown>;
-  const keys = [
-    'layoutMode',
-    'layoutWrap',
-    'primaryAxisSizingMode',
-    'counterAxisSizingMode',
-    'primaryAxisAlignItems',
-    'counterAxisAlignItems',
-    'layoutAlign',
-    'layoutGrow',
-    'layoutPositioning',
-    'itemSpacing',
-    'counterAxisSpacing',
-    'paddingLeft',
-    'paddingRight',
-    'paddingTop',
-    'paddingBottom',
-    'clipsContent',
-  ];
-  const layout: Record<string, unknown> = {};
-  for (const key of keys) {
-    const value = n[key];
-    if (value !== undefined && value !== figma.mixed) layout[key] = value;
-  }
-  return Object.keys(layout).length ? layout : undefined;
-}
-
-async function summarize(node: BaseNode, depth: number): Promise<unknown> {
-  const base: Record<string, unknown> = {
-    id: node.id,
-    name: node.name,
-    sanitizedName: sanitize(node.name),
-    type: node.type,
-  };
-  const n = node as unknown as Record<string, unknown>;
-  const width = finiteNumber(n.width);
-  const height = finiteNumber(n.height);
-  if (width !== undefined && height !== undefined) {
-    base.bounds = {
-      x: finiteNumber(n.x) ?? 0,
-      y: finiteNumber(n.y) ?? 0,
-      w: width,
-      h: height,
-    };
-  }
-  if (n.absoluteBoundingBox) base.absoluteBoundingBox = n.absoluteBoundingBox;
-  if (n.absoluteRenderBounds) base.absoluteRenderBounds = n.absoluteRenderBounds;
-  if (n.relativeTransform) base.relativeTransform = flattenMatrix(n.relativeTransform as Transform);
-  if (n.absoluteTransform) base.absoluteTransform = flattenMatrix(n.absoluteTransform as Transform);
-  if (n.rotation !== undefined) base.rotation = n.rotation;
-  if (n.constraints) base.constraints = n.constraints;
-  if (n.visible !== undefined) base.visible = n.visible;
-  if (n.locked !== undefined) base.locked = n.locked;
-  if (n.opacity !== undefined) base.opacity = n.opacity;
-  if (n.blendMode !== undefined) base.blendMode = n.blendMode;
-
-  const layout = pickLayout(node);
-  if (layout) base.layout = layout;
-
-  const fills = serializePaints(n.fills);
-  if (fills) base.fills = fills;
-  const strokes = serializePaints(n.strokes);
-  if (strokes) {
-    base.strokes = strokes;
-    base.strokeWeight = n.strokeWeight;
-    base.strokeAlign = n.strokeAlign;
-    if (Array.isArray(n.dashPattern)) base.dashPattern = n.dashPattern;
-  }
-  const effects = serializeEffects(n.effects);
-  if (effects) base.effects = effects;
-  if (n.cornerRadius !== undefined && n.cornerRadius !== figma.mixed) base.cornerRadius = n.cornerRadius;
-  const cornerKeys = ['topLeftRadius', 'topRightRadius', 'bottomRightRadius', 'bottomLeftRadius'];
-  const corners: Record<string, unknown> = {};
-  for (const key of cornerKeys) if (n[key] !== undefined && n[key] !== figma.mixed) corners[key] = n[key];
-  if (Object.keys(corners).length) base.corners = corners;
-
-  if (node.type === 'TEXT') base.text = serializeText(node as TextNode);
-  if ('visible' in node) {
-    const scene = node as SceneNode;
-    const canonical = await detectCanonical(scene);
-    if (canonical) base.canonical = canonical;
-    base.export = {
-      canExport: 'exportAsync' in scene,
-      isExportablePng: isExportable(scene),
-      canMerge: canMerge(scene),
-      excluded: excluded.has(scene.id),
-      merged: merged.has(scene.id),
-      rasterize: forcedPng.has(scene.id),
-    };
-  }
-
-  if (depth > 0 && 'children' in node) {
-    base.children = await Promise.all((node as ChildrenMixin).children.map((c) => summarize(c, depth - 1)));
-  }
-  return base;
-}
-
-function isVisibleNode(node: SceneNode): boolean {
-  return (node as unknown as { visible?: boolean }).visible !== false;
-}
-
-function boundsOf(node: SceneNode): { x: number; y: number; w: number; h: number } {
-  const abs = (node as unknown as { absoluteBoundingBox?: { x: number; y: number; width: number; height: number } }).absoluteBoundingBox;
-  if (abs) return { x: abs.x, y: abs.y, w: abs.width, h: abs.height };
-  const geo = node as unknown as { x?: number; y?: number; width?: number; height?: number };
-  return {
-    x: typeof geo.x === 'number' ? geo.x : 0,
-    y: typeof geo.y === 'number' ? geo.y : 0,
-    w: typeof geo.width === 'number' ? geo.width : 0,
-    h: typeof geo.height === 'number' ? geo.height : 0,
-  };
-}
-
-function localBoundsOf(node: SceneNode): { x: number; y: number; w: number; h: number } {
-  const geo = node as unknown as { x?: number; y?: number; width?: number; height?: number };
-  return {
-    x: typeof geo.x === 'number' ? geo.x : 0,
-    y: typeof geo.y === 'number' ? geo.y : 0,
-    w: typeof geo.width === 'number' ? geo.width : 0,
-    h: typeof geo.height === 'number' ? geo.height : 0,
-  };
-}
-
-function frameRecord(page: PageNode, node: FrameNode, sectionNode?: SectionNode): Record<string, unknown> {
-  return {
-    id: node.id,
-    name: sanitize(node.name),
-    displayName: node.name,
-    type: node.type,
-    page: { id: page.id, name: page.name },
-    section: sectionNode ? sanitize(sectionNode.name) : '',
-    sectionName: sectionNode?.name || '',
-    role: frameRole(node),
-    visible: isVisibleNode(node),
-    bounds: boundsOf(node),
-  };
-}
-
-function listFrameRecords(currentPageOnly: boolean, includeHidden: boolean, screensOnly: boolean): Record<string, unknown> {
-  const pages = currentPageOnly ? [figma.currentPage] : figma.root.children;
-  const frames: Record<string, unknown>[] = [];
-  for (const page of pages) {
-    if (screensOnly && page.name === COMPONENTS_PAGE) continue;
-    for (const node of page.children) {
-      const nodeVisible = (node as unknown as { visible?: boolean }).visible !== false;
-      if (!includeHidden && !nodeVisible) continue;
-      if (node.type === 'SECTION') {
-        for (const child of (node as SectionNode).children) {
-          if (child.type !== 'FRAME') continue;
-          if (!includeHidden && !isVisibleNode(child as FrameNode)) continue;
-          frames.push(frameRecord(page, child as FrameNode, node as SectionNode));
-        }
-        continue;
-      }
-      if (node.type === 'FRAME') frames.push(frameRecord(page, node as FrameNode));
-    }
-  }
-  const initial = frames.find((f) => f.role !== 'shell' && f.role !== 'overlay') || frames[0] || null;
-  return { currentPage: { id: figma.currentPage.id, name: figma.currentPage.name }, count: frames.length, initial, frames };
-}
-
-function colorToObject(color: RGB | RGBA_ | undefined): unknown {
-  if (!color) return undefined;
-  return {
-    r: color.r,
-    g: color.g,
-    b: color.b,
-    a: (color as RGBA_).a,
-  };
-}
-
-interface RGB {
-  r: number;
-  g: number;
-  b: number;
-}
-interface RGBA_ extends RGB {
-  a?: number;
-}
-
-function paintSummary(paint: Paint): Record<string, unknown> {
-  const base: Record<string, unknown> = {
-    type: paint.type,
-    visible: paint.visible !== false,
-    opacity: paint.opacity,
-    blendMode: paint.blendMode,
-  };
-  if (paint.type === 'SOLID') {
-    base.color = colorToObject((paint as SolidPaint).color);
-  } else if (paint.type === 'IMAGE') {
-    const p = paint as ImagePaint;
-    base.scaleMode = p.scaleMode;
-    base.hasImage = !!p.imageHash;
-  } else if (paint.type.startsWith('GRADIENT')) {
-    const p = paint as GradientPaint;
-    base.gradientStops = p.gradientStops.map((s) => ({ position: s.position, color: colorToObject(s.color) }));
-    base.gradientTransform = p.gradientTransform ? ([] as number[]).concat(...p.gradientTransform) : undefined;
-  }
-  return base;
-}
-
-function paintsOf(node: BaseNode, key: 'fills' | 'strokes'): Record<string, unknown>[] {
-  const value = (node as unknown as Record<string, unknown>)[key];
-  return Array.isArray(value) ? (value as Paint[]).map(paintSummary) : [];
-}
-
-function effectsOf(node: BaseNode): Record<string, unknown>[] {
-  const effects = (node as unknown as { effects?: readonly Effect[] }).effects;
-  if (!Array.isArray(effects)) return [];
-  return effects.map((effect) => {
-    const out: Record<string, unknown> = { type: effect.type, visible: effect.visible !== false, blendMode: effect.blendMode };
-    if (effect.type === 'DROP_SHADOW' || effect.type === 'INNER_SHADOW') {
-      const e = effect as DropShadowEffect & { spread?: number };
-      out.color = colorToObject(e.color);
-      out.offset = e.offset;
-      out.radius = e.radius;
-      out.spread = e.spread;
-      out.showShadowBehindNode = effect.type === 'DROP_SHADOW' ? e.showShadowBehindNode : undefined;
-    } else if (effect.type === 'LAYER_BLUR' || effect.type === 'BACKGROUND_BLUR') {
-      out.radius = (effect as BlurEffect).radius;
-    }
-    return out;
-  });
-}
-
-function textDetails(node: BaseNode): Record<string, unknown> | undefined {
-  if (node.type !== 'TEXT') return undefined;
-  const text = node as TextNode;
-  return {
-    characters: text.characters,
-    fontName: text.fontName === figma.mixed ? 'mixed' : text.fontName,
-    fontSize: text.fontSize === figma.mixed ? 'mixed' : text.fontSize,
-    lineHeight: text.lineHeight === figma.mixed ? 'mixed' : text.lineHeight,
-    letterSpacing: text.letterSpacing === figma.mixed ? 'mixed' : text.letterSpacing,
-    textAlignHorizontal: text.textAlignHorizontal,
-    textAlignVertical: text.textAlignVertical,
-    textAutoResize: text.textAutoResize,
-  };
-}
-
-function isSceneNode(node: BaseNode): node is SceneNode {
-  return node.type !== 'DOCUMENT' && node.type !== 'PAGE';
-}
-
-async function nodeDetails(node: BaseNode): Promise<Record<string, unknown>> {
-  const base: Record<string, unknown> = {
-    id: node.id,
-    name: sanitize(node.name),
-    displayName: node.name,
-    type: node.type,
-    parentId: node.parent?.id || null,
-  };
-  if (isSceneNode(node)) {
-    const canonical = await detectCanonical(node);
-    base.bounds = { absolute: boundsOf(node), local: localBoundsOf(node) };
-    base.rotation = (node as unknown as { rotation?: number }).rotation || 0;
-    base.visible = isVisibleNode(node);
-    base.locked = (node as unknown as { locked?: boolean }).locked === true;
-    base.constraints = (node as unknown as { constraints?: unknown }).constraints;
-    base.layout = {
-      layoutMode: (node as unknown as { layoutMode?: unknown }).layoutMode,
-      primaryAxisAlignItems: (node as unknown as { primaryAxisAlignItems?: unknown }).primaryAxisAlignItems,
-      counterAxisAlignItems: (node as unknown as { counterAxisAlignItems?: unknown }).counterAxisAlignItems,
-      itemSpacing: (node as unknown as { itemSpacing?: unknown }).itemSpacing,
-      paddingLeft: (node as unknown as { paddingLeft?: unknown }).paddingLeft,
-      paddingRight: (node as unknown as { paddingRight?: unknown }).paddingRight,
-      paddingTop: (node as unknown as { paddingTop?: unknown }).paddingTop,
-      paddingBottom: (node as unknown as { paddingBottom?: unknown }).paddingBottom,
-    };
-    base.fills = paintsOf(node, 'fills');
-    base.strokes = paintsOf(node, 'strokes');
-    base.strokeWeight = (node as unknown as { strokeWeight?: unknown }).strokeWeight;
-    base.effects = effectsOf(node);
-    base.text = textDetails(node);
-    base.canonical = canonical;
-    base.exportability = {
-      canExportPng: node.type === 'TEXT' || isExportable(node),
-      canMerge: canMerge(node),
-      isCanonical: !!canonical,
-      canonicalRef: canonical?.ref,
-    };
-    if ('children' in node) {
-      base.children = (node as ChildrenMixin).children.map((c) => ({ id: c.id, name: c.name, type: c.type }));
-    }
-  } else if ('children' in node) {
-    base.children = (node as ChildrenMixin).children.map((c) => ({ id: c.id, name: c.name, type: c.type }));
-  }
-  return base;
-}
-
-async function handleMcp(req: McpRequest) {
-  const response: { type: string; requestId: string; data?: unknown; error?: string } = {
-    type: req.type,
-    requestId: req.requestId,
-  };
-  try {
-    switch (req.type) {
-      case 'get_metadata':
-        response.data = {
-          fileName: figma.root.name,
-          currentPage: figma.currentPage.name,
-          pages: figma.root.children.map((p) => ({ id: p.id, name: p.name })),
-        };
-        break;
-      case 'get_document':
-        response.data = await summarize(figma.currentPage, 2);
-        break;
-      case 'get_selection':
-        response.data = await Promise.all(figma.currentPage.selection.map((n) => summarize(n, 1)));
-        break;
-      case 'get_node': {
-        const id = (req.params?.nodeId as string) || req.nodeIds?.[0];
-        const node = id ? await figma.getNodeByIdAsync(id) : null;
-        response.data = node ? await summarize(node, 3) : null;
-        if (!node) response.error = `Node not found: ${id}`;
-        break;
-      }
-      case 'list_frames': {
-        const currentPageOnly = req.params?.currentPageOnly !== false;
-        const includeHidden = req.params?.includeHidden === true;
-        response.data = listFrameRecords(currentPageOnly, includeHidden, false);
-        break;
-      }
-      case 'list_screens': {
-        const currentPageOnly = req.params?.currentPageOnly !== false;
-        const includeHidden = req.params?.includeHidden === true;
-        response.data = listFrameRecords(currentPageOnly, includeHidden, true);
-        break;
-      }
-      case 'get_node_details': {
-        const id = (req.params?.nodeId as string) || req.nodeIds?.[0];
-        const node = id ? await figma.getNodeByIdAsync(id) : null;
-        response.data = node ? await nodeDetails(node) : null;
-        if (!node) response.error = `Node not found: ${id}`;
-        break;
-      }
-      case 'get_design_context': {
-        const depth = (req.params?.depth as number) ?? 2;
-        response.data = await summarize(figma.currentPage, depth);
-        break;
-      }
-      case 'get_screenshot': {
-        const ids = req.nodeIds || figma.currentPage.selection.map((n) => n.id);
-        const scale = (req.params?.scale as number) ?? 2;
-        // MCP responses leave the plugin as JSON (ui.ts → WebSocket → bridge),
-        // so the PNG bytes go base64 here: ~1.33× the binary size on the wire
-        // vs ~3.7× as decimal number[] text. The bridge (server/src/tools.ts)
-        // accepts both forms during the transition.
-        const shots: { nodeId: string; data: string }[] = [];
-        // Ids that resolve to nothing or to a non-exportable node are reported in
-        // `missing` rather than silently dropped — otherwise a shorter screenshots
-        // array reads as success and the caller can't tell partial from complete.
-        const missing: string[] = [];
-        for (const id of ids) {
-          const node = await figma.getNodeByIdAsync(id) as SceneNode | null;
-          if (node && 'exportAsync' in node) {
-            const bytes = await (node as unknown as {
-              exportAsync: (s: ExportSettings) => Promise<Uint8Array>;
-            }).exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: scale } });
-            shots.push({ nodeId: id, data: bytesToBase64(bytes) });
-          } else {
-            missing.push(id);
-          }
-        }
-        response.data = { screenshots: shots, missing };
-        break;
-      }
-      case 'export_unity': {
-        // Full Unity export reusing the UI's exporter, driven over MCP so an
-        // agent can batch every frame itself. (FigmaTest feature.)
-        // Shares the one-export-at-a-time gate with the UI buttons: this path
-        // mutates node.visible exactly the same way. Throwing here surfaces the
-        // rejection to the bridge as a normal MCP error response.
-        if (exportInFlight) throw new Error(EXPORT_BUSY_MESSAGE);
-        exportInFlight = true;
-        try {
-          const ids = req.nodeIds || figma.currentPage.selection.map((n) => n.id);
-          const scale = (req.params?.scale as ExportScale) || DEFAULT_EXPORT_SCALE;
-          const options = {
-            ...DEFAULT_EXPORT_OPTIONS,
-            ...((req.params?.options as Partial<ExportOptions> | undefined) || {}),
-          };
-          const exportSets = exportSetsWithConfigs(req.params?.elementConfigs as ElementConfig[] | undefined);
-          const exports: unknown[] = [];
-          // Ids that resolve to nothing or to a non-exportable node are reported
-          // in `missing` rather than silently dropped (see get_screenshot) — a
-          // shorter exports array would otherwise read as a complete success.
-          const missing: string[] = [];
-          for (const id of ids) {
-            const node = await figma.getNodeByIdAsync(id) as SceneNode | null;
-            if (node && 'exportAsync' in node) {
-              const result = await exportDesign(
-                node,
-                scale,
-                options,
-                exportSets.excluded,
-                exportSets.merged,
-                exportSets.forcedPng,
-                exportSets.passthrough
-              );
-              exports.push({
-                nodeId: id,
-                name: sanitize(node.name),
-                manifest: result.manifest,
-                // JSON wire boundary (see get_screenshot above): base64, not
-                // number[] — server/src/tools.ts executeExportUnity decodes
-                // either form.
-                assets: result.assets.map((a) => ({ name: a.name, data: bytesToBase64(a.data) })),
-              });
-            } else {
-              missing.push(id);
-            }
-          }
-          response.data = { exports, missing };
-        } finally {
-          exportInFlight = false;
-        }
-        break;
-      }
-      case 'export_project_unity': {
-        if (exportInFlight) throw new Error(EXPORT_BUSY_MESSAGE);
-        // Claim the gate immediately after the guard (before collectScreens, which
-        // reads the tree exportDesign mutates) so a concurrent export can't slip in
-        // during collection — matching export_unity above. Cleared in `finally`.
-        exportInFlight = true;
-        try {
-          const found = collectScreens(figma.currentPage);
-          if (found.length === 0) throw new Error('No top-level frames (or frames in sections) on this page.');
-          const scale = (req.params?.scale as ExportScale) || DEFAULT_EXPORT_SCALE;
-          const options = {
-            ...DEFAULT_EXPORT_OPTIONS,
-            ...((req.params?.options as Partial<ExportOptions> | undefined) || {}),
-          };
-          const exportSets = exportSetsWithConfigs(req.params?.elementConfigs as ElementConfig[] | undefined);
-          const screens: unknown[] = [];
-          for (const foundScreen of found) {
-            const result = await exportDesign(
-              foundScreen.node,
-              scale,
-              options,
-              exportSets.excluded,
-              exportSets.merged,
-              exportSets.forcedPng,
-              exportSets.passthrough
-            );
-            screens.push({
-              nodeId: foundScreen.node.id,
-              name: sanitize(foundScreen.node.name),
-              manifest: result.manifest,
-              assets: result.assets.map((a) => ({ name: a.name, data: bytesToBase64(a.data) })),
-              section: foundScreen.section,
-              role: frameRole(foundScreen.node),
-            });
-          }
-          const firstScreen = found.find((s) => frameRole(s.node) !== 'shell' && frameRole(s.node) !== 'overlay') || found[0];
-          response.data = {
-            project: {
-              name: figma.currentPage.name,
-              initial: firstScreen ? sanitize(firstScreen.node.name) : '',
-            },
-            screens,
-          };
-        } finally {
-          exportInFlight = false;
-        }
-        break;
-      }
-      case 'create_canonical': {
-        // Creators switch figma.currentPage and run async; reject while an export
-        // is mutating node.visible (same gate as export_unity above).
-        if (exportInFlight) throw new Error(EXPORT_BUSY_MESSAGE);
-        useComponentsPage = (req.params as { componentsPage?: boolean } | undefined)?.componentsPage !== false;
-        const kind = String((req.params as { kind?: string } | undefined)?.kind || '');
-        const comp = kind === 'button'
-          ? await createCanonicalButton()
-          : await createCanonical(kind,
-            (req.params as { listOpts?: Partial<ListOptions> } | undefined)?.listOpts,
-            (req.params as { sliderOpts?: Partial<SliderOptions> } | undefined)?.sliderOpts,
-            (req.params as { tableOpts?: Partial<TableOptions> } | undefined)?.tableOpts,
-            (req.params as { progressOpts?: Partial<ProgressOptions> } | undefined)?.progressOpts,
-            (req.params as { stepperOpts?: Partial<StepperOptions> } | undefined)?.stepperOpts,
-            (req.params as { modalOpts?: Partial<ModalOptions> } | undefined)?.modalOpts);
-        response.data = {
-          created: true,
-          kind,
-          component: { id: comp.id, name: comp.name, page: comp.parent?.type === 'PAGE' ? comp.parent.name : undefined },
-          selection: figma.currentPage.selection.map((n) => ({ id: n.id, name: n.name, type: n.type })),
-        };
-        break;
-      }
-      case 'create_shell': {
-        if (exportInFlight) throw new Error(EXPORT_BUSY_MESSAGE); // see 'create_canonical'
-        useComponentsPage = (req.params as { componentsPage?: boolean } | undefined)?.componentsPage !== false;
-        const result = await createShellScaffold((req.params as { shellOpts?: Partial<ShellOptions> } | undefined)?.shellOpts);
-        response.data = {
-          section: { id: result.section.id, name: result.section.name },
-          shell: { id: result.shell.id, name: result.shell.name, role: frameRole(result.shell), bounds: boundsOf(result.shell) },
-          screens: result.screens.map((s) => ({ id: s.id, name: s.name, role: frameRole(s), bounds: boundsOf(s) })),
-        };
-        break;
-      }
-      default:
-        response.error = `Unknown MCP command: ${req.type}`;
-    }
-  } catch (e) {
-    response.error = String((e as Error)?.message || e);
-  }
-  figma.ui.postMessage({ type: 'mcp-response', payload: response });
-}
-
 // ---------------------------------------------------------------------------
 // Create Button tool — scaffolds a tagged canonical-button Component on a
 // dedicated "FigForge Components" page. Skin it, then drop instances anywhere;

@@ -198,7 +198,7 @@ export function mapTransform(input: MapInput): UnityTransform {
     pivot: rotated ? [0, 1] : [0.5, 0.5],
     offsetMin,
     offsetMax,
-    rotationZ: rotation || 0, // Figma degrees, +CCW on screen (see HierarchyBuilder/UxmlBuilder)
+    rotationZ: rotation || 0, // Figma degrees, +CCW on screen (see HierarchyBuilder)
     flipX: input.flipX || undefined,
     flipY: input.flipY || undefined,
   };

@@ -40,7 +40,7 @@ namespace FigForge
             // and canonical button state sprites — so they scale without smearing
             // their corners. Icons / plain fills aren't candidates, so they stay Simple.
             // Keyed by the BARE file name. Manifest filenames are untrusted, so —
-            // like ZipImporter / FigForgeLiveImport — we flatten with
+            // like ZipImporter — we flatten with
             // Path.GetFileName everywhere a filename builds a path or dictionary
             // key, neutralising any "../" path-traversal (zip-slip) that would
             // otherwise let File.Copy escape targetFolder.

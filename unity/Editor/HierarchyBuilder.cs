@@ -622,9 +622,7 @@ namespace FigForge
             rt.offsetMax = offsetMax;
             // Sign convention: rotationZ is Figma's rotation in degrees, positive =
             // counterclockwise on screen. uGUI is y-up with +Z out of the screen, so
-            // a +Z euler is also CCW on screen — pass through unchanged. (UxmlBuilder
-            // negates instead because UI Toolkit is y-down; the asymmetry is correct,
-            // don't "fix" it.)
+            // a +Z euler is also CCW on screen — pass through unchanged.
             if (Mathf.Abs(t.rotationZ) > 0.001f)
                 rt.localEulerAngles = new Vector3(0, 0, t.rotationZ);
         }

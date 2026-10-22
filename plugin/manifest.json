@@ -5,13 +5,13 @@
   "main": "dist/main.js",
   "ui": "dist/ui.html",
   "documentAccess": "dynamic-page",
-  "editorType": ["figma"],
+  "editorType": [
+    "figma"
+  ],
   "networkAccess": {
     "allowedDomains": [
-      "ws://localhost:1994",
-      "http://localhost:1995",
       "https://cdnjs.cloudflare.com"
     ],
-    "reasoning": "WebSocket to the local FigForge MCP bridge (ws://localhost:1994); HTTP POST to the local Unity FigForge live-import server (http://localhost:1995, the importer default); and JSZip from cdnjs for client-side bundle packaging. Figma matches the exact port (no port wildcards), so if you change the Unity live-import port from 1995, add that origin here too."
+    "reasoning": "JSZip from cdnjs packages downloadable ZIP bundles."
   }
 }

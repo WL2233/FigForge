@@ -74,7 +74,6 @@ namespace FigForge
             new IconEntry("FigForge.FigForgeFrame", typeof(RectTransform)),
             new IconEntry("FigForge.FigForgeFrameElement", typeof(RectTransform)),
             new IconEntry("FigForge.FigForgeScreen", typeof(Canvas)),
-            new IconEntry("FigForge.UIScreenManager", typeof(Canvas)),
             new IconEntry("FigForge.FigForgeNavBinder", typeof(Button)),
             new IconEntry("FigForge.FigForgeNavLink", typeof(Button)),
             new IconEntry("FigForge.FigForgeImportStamp", typeof(TextAsset)),

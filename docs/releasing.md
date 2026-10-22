@@ -1,6 +1,6 @@
 # Releasing
 
-How a FigForge release is cut, what CI does, and how the three packages are versioned.
+How a FigForge release is cut, what CI does, and how the two packages are versioned.
 
 ## TL;DR — releases are cut from tags
 
@@ -35,21 +35,17 @@ trusted into the artifacts.
 | Artifact | Built from | How a user installs it |
 |---|---|---|
 | `figforge-plugin-<tag>.zip` | `plugin/manifest.json` + `plugin/dist` | Figma Desktop → *Plugins → Development → Import plugin from manifest…* |
-| `figforge-bridge-<tag>.zip` | `server/dist` + `package.json` + lockfile | unzip → `npm install --omit=dev` → point the MCP client at `dist/index.js` |
 | `figforge-unity-importer-<tag>.tgz` | `npm pack` in `unity/` | Unity → Package Manager → *Add package from tarball…* |
 
 Notes are auto-generated (`generate_release_notes: true`) and prefixed with the
 Install block defined in `release.yml`. The Release is published immediately (not a
 draft) by `github-actions[bot]`.
 
-## Versioning — three packages, one product tag
+## Versioning — two packages, one product tag
 
 - **`plugin/package.json`** and **`unity/package.json`** track the *product* version
   and match the tag (tag `v1.0.41` ⇒ both at `1.0.41`). The plugin version is
   injected into the UI bundle at build time via `__FIGFORGE_VERSION__`.
-- **`server/package.json`** (`figforge-bridge`) moves on its **own** cadence — bump
-  it only when the bridge changes, so it normally lags the tag. That drift is
-  expected, not a mistake.
 
 The workflow takes the version straight from the tag name (`GITHUB_REF_NAME`), so
 the tag is the source of truth; the `package.json` bumps are for the artifacts'
@@ -60,7 +56,6 @@ internal metadata.
 1. Land everything on `main`; confirm **CI** is green.
 2. Bump versions:
    - `plugin/package.json` + `unity/package.json` → the new `X.Y.Z`.
-   - `server/package.json` → its next patch **only if** the bridge changed.
 3. Commit: `release: <summary> (vX.Y.Z)`.
 4. Annotated tag: `git tag -a vX.Y.Z -m "FigForge vX.Y.Z — <summary>"`.
 5. Push branch then tag: `git push origin main && git push origin vX.Y.Z`.

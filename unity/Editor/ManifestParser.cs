@@ -14,7 +14,7 @@ namespace FigForge
         // Manifest wire-format versions this importer understands — counterpart
         // constant: plugin/src/types.ts MANIFEST_VERSION. Keep the two in sync.
         //   "1.0" — legacy exports (live-import assets as number[] JSON)
-        //   "2.0" — base64 live-import assets + canonicalSchema in the manifest
+        //   "2.0" — canonicalSchema in the manifest
         // An unknown (or missing) version means the plugin and this importer are
         // from different generations: the contract has dozens of optional fields,
         // so a mismatched pair degrades silently field-by-field. Fail loudly

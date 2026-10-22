@@ -81,27 +81,6 @@
     min-width: 23px; font-family: inherit;
   }
   .seg button.active { background: var(--brand-soft); color: var(--text); box-shadow: inset 3px 0 0 var(--brand); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex: none; }
-  .dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
-  .dot.connecting { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
-  /* MCP connect/disconnect control (header) */
-  .mcp {
-    display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap;
-    background: var(--panel-soft); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); padding: 4px 8px; font-size: 10px; color: var(--text-secondary);
-    min-height: 26px;
-  }
-  .mcp:hover { color: var(--text); background: var(--bg-hover); }
-  .mcp.connected { border-color: var(--ok); color: var(--text); background: var(--brand-soft); }
-  .mcp.connecting { border-color: var(--warn); }
-  .bridge-token {
-    box-sizing: border-box; width: 84px; min-height: 26px;
-    background: var(--panel-soft); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); padding: 4px 8px; font-size: 10px;
-    color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-  .bridge-token::placeholder { color: var(--text-secondary); }
-  .bridge-token:focus { outline: none; border-color: var(--ok); }
   .icon-btn {
     border: 1px solid var(--border); background: var(--panel-soft); color: var(--text-secondary);
     width: 26px; height: 26px; border-radius: var(--radius-sm); cursor: pointer; font-size: 12px;
@@ -109,12 +88,9 @@
   }
   .icon-btn:hover { color: var(--text); background: var(--bg-hover); }
 
-  /* minimized: collapse to a slim status bar — keep only logo, MCP dot, restore */
   body.minimized main,
   body.minimized #sizeSeg,
   body.minimized #version,
-  body.minimized #mcpLabel,
-  body.minimized .bridge-token,
   body.minimized .title { display: none; }
   body.minimized header { border-bottom: none; }
 
@@ -190,17 +166,11 @@
     background: var(--panel); border: 1px solid var(--border);
     border-radius: var(--radius); padding: 7px 8px;
   }
-  .port-chip input, .font-chip input, .token-chip input {
+  .font-chip input {
     width: 54px; background: transparent; border: none; color: inherit; padding: 0; min-height: 16px;
   }
   .font-chip input { width: 42px; }
-  .token-chip input { width: 116px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .port-chip input:focus, .font-chip input:focus, .token-chip input:focus { outline: none; }
-  /* Unity live-import settings, grouped with the Send-to-Unity buttons in the footer. */
-  .unity-settings { grid-column: 1 / -1; display: flex; gap: 6px; align-items: center; }
-  .unity-settings .port-chip { flex: none; }
-  .unity-settings .token-chip { flex: 1 1 auto; min-width: 0; }
-  .unity-settings .token-chip input { flex: 1 1 auto; width: auto; min-width: 0; }
+  .font-chip input:focus { outline: none; }
 
   /* ---- List variants popover (floats under the ＋List chip) ---- */
   .list-pop {
@@ -390,28 +360,6 @@
     font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit;
   }
   .btn-primary:hover:not(:disabled) { background: var(--brand); }
-  .btn-unity {
-    grid-column: 1 / -1; min-height: 46px; font-size: 13px;
-    background: linear-gradient(180deg, #35ee78 0%, #22ba5c 44%, #13833d 100%);
-    border: 1px solid #42f184;
-    text-shadow: 0 1px 0 rgba(0,0,0,.34);
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.32),
-      inset 0 -2px 0 rgba(0,0,0,.24),
-      0 8px 18px rgba(0,0,0,.26),
-      0 0 0 1px rgba(43,214,109,.18);
-  }
-  .btn-unity:hover:not(:disabled) {
-    background: linear-gradient(180deg, #57ff91 0%, #2fda6b 45%, #179348 100%);
-  }
-  .btn-unity:active:not(:disabled) {
-    background: linear-gradient(180deg, #117037 0%, #1fa452 55%, #2bcf66 100%);
-    box-shadow:
-      inset 0 2px 4px rgba(0,0,0,.34),
-      inset 0 1px 0 rgba(255,255,255,.12),
-      0 4px 10px rgba(0,0,0,.22);
-  }
-  .btn-frame-unity { color: #fff; border-color: color-mix(in srgb, var(--accent) 44%, var(--border)); }
   .btn-primary:disabled, .btn-ghost:disabled { opacity: .45; cursor: not-allowed; }
   .btn-ghost {
     background: var(--panel-soft); color: var(--text); border: 1px solid var(--border);
@@ -427,7 +375,6 @@
     .create-settings { justify-content: flex-start; align-items: center; }
     .export-actions { min-width: 0; }
     .tree-filter-row { align-items: stretch; flex-direction: column; gap: 4px; }
-    #mcpLabel { display: none; }
   }
   @media (max-width: 430px) {
     header { gap: 6px; }
@@ -458,12 +405,7 @@
         <button data-size="M" class="active">M</button>
         <button data-size="L">L</button>
       </div>
-      <div class="mcp" id="mcpCtl" title="Connect to the local FigForge MCP bridge (ws://localhost:1994)">
-        <span class="dot" id="mcpDot"></span>
-        <span id="mcpLabel">Connect MCP</span>
-      </div>
-      <input type="text" id="bridgeToken" class="bridge-token" placeholder="token" autocomplete="off" spellcheck="false"
-             title="Optional bridge token. Only needed when the bridge server runs with FIGFORGE_BRIDGE_TOKEN set; leave blank for the default zero-config bridge." />
+
       <button class="icon-btn" id="minBtn" title="Minimize">—</button>
     </div>
   </header>
@@ -642,21 +584,15 @@
         <div class="status-wrap">
           <div class="status-card">
             <div class="status-meta">
-              <span>Status · Bundle / Unity</span>
+              <span>Status · ZIP</span>
               <span class="clear-log" id="clearLog" title="Clear log">Clear</span>
             </div>
             <div class="statusline" id="status"></div>
             <div class="progress" id="progress"><div></div></div>
           </div>
           <div class="export-actions">
-            <div class="unity-settings">
-              <label class="chip port-chip" title="Unity live-import port (FigForge importer must have live import enabled)">Port <input type="number" id="unityPort" value="1995" min="1024" max="65535" /></label>
-              <label class="chip token-chip" title="Live-import token from the Unity FigForge importer (Live import → Plugin token → Copy). Click here and paste with ⌘/Ctrl-V.">Token <input type="text" id="unityToken" placeholder="paste from Unity (⌘V)" autocomplete="off" spellcheck="false" /></label>
-            </div>
-            <button class="btn-primary btn-unity" id="exportUnityBtn" title="Send every top-level frame on this page straight to Unity (FigForge importer with live import enabled)">→ Send Page to Unity</button>
-            <button class="btn-ghost btn-frame-unity" id="exportFrameUnityBtn" title="Send only the selected frame straight to Unity" disabled>Send Frame</button>
             <button class="btn-ghost" id="exportBtn" disabled>Download Frame</button>
-            <button class="btn-ghost" id="exportPageBtn" title="Export every top-level frame on this page as a connected project bundle (.zip)">Download Page</button>
+            <button class="btn-ghost" id="exportPageBtn" title="Export every top-level frame on this page as a project bundle (.zip)">Download Page</button>
           </div>
         </div>
       </footer>
