@@ -4,14 +4,11 @@
 // Supports: constraint-driven anchors (offsetMin/offsetMax straight from the
 // manifest), sprite images, solid/gradient fills, rounded fill-only panels,
 // real stroke borders, rotation, text (TMP), clipping, auto-layout, and
-// canonical UI elements (a `Btn_*` element becomes an instance of a reusable
-// prefab instead of being rebuilt).
+// UI controls built directly into the page hierarchy from exported definitions.
 // =============================================================================
 
 using System;
 using System.Collections.Generic;
-using System.Text;
-using Newtonsoft.Json;
 using TMPro;
 using UnityEditor;
 using UnityEngine;
@@ -28,8 +25,6 @@ namespace FigForge
         public float exportScale = 1f;
         public Dictionary<string, Sprite> sprites = new Dictionary<string, Sprite>();
         public Func<string, string, TMP_FontAsset> resolveFont;
-        internal Dictionary<string, GameObject> canonicalBySignature;
-        internal readonly Dictionary<string, GameObject> canonicalByReference = new Dictionary<string, GameObject>();
         // Vanilla import (manifest.vanilla): render everything from baked sprites —
         // no SDF/vector/layered shaders, no page compositor. The plugin bakes a PNG
         // onto every shape, so this only governs the assetless fallback (plain Image
@@ -42,14 +37,6 @@ namespace FigForge
         public readonly List<KeyValuePair<string, GameObject>> registered = new List<KeyValuePair<string, GameObject>>();
         // element id → built GameObject, for runtime element registration.
         public readonly Dictionary<string, GameObject> byElementId = new Dictionary<string, GameObject>();
-        // "kind|ref" keys whose canonical prefab was already resolved during THIS page
-        // build. A manifest carries ONE definition per ref, so only the first element
-        // of a ref may regenerate the shared prefab. A later same-ref element whose
-        // signature still differs is per-instance data leaking into the signature —
-        // regenerating again would SaveAsPrefabAsset under the instances already
-        // placed this build, resetting their name/rect/binding overrides to prefab
-        // defaults (the page's first inputs came out as default-sized 'inputfield').
-        public readonly HashSet<string> resolvedCanonicalRefs = new HashSet<string>();
         // Radio canonicals are grouped by (parent, canonical ref): two independent radio
         // SETS placed under the same parent must NOT share a ToggleGroup, or selecting an
         // option in one set would clear the other. Keyed "parentInstanceID|ref".
@@ -68,9 +55,6 @@ namespace FigForge
             if (roots.Count == 0) { ctx.log("no root element in manifest"); return null; }
 
             ctx.registered.Clear();
-            ctx.resolvedCanonicalRefs.Clear();
-            ctx.canonicalByReference.Clear();
-            ctx.canonicalBySignature = null;
             ctx.radioGroups.Clear();
             ctx.radioGroupFirst.Clear();
 
@@ -316,35 +300,18 @@ namespace FigForge
                 return null;
             }
 
-            // ---- Canonical element: instantiate a prefab (generated once from the
-            // Figma component) ------
+            // Build controls inline; no intermediate control prefab assets.
             if (e.canonical != null)
             {
                 string canonicalKind = string.IsNullOrEmpty(e.canonical.kind) ? "button" : e.canonical.kind;
-                var prefab = ResolveOrGenerateCanonicalPrefab(e, ctx);
                 GameObject inst;
-                if (prefab != null)
+                if (canonicalKind == "button" && e.canonical.shape != null)
                 {
-                    inst = (GameObject)UnityEditor.PrefabUtility.InstantiatePrefab(prefab, parent);
-                    if (inst == null)
-                    {
-                        // A broken/corrupt managed prefab can instantiate to null —
-                        // fall back to a labelled placeholder instead of NRE'ing.
-                        ctx.log($"canonical '{e.canonical.Ref}' prefab failed to instantiate → placeholder");
-                        inst = BuildPlaceholderButton(e, parent, ctx);
-                    }
-                    else
-                    {
-                        inst.name = ObjectName(e, canonicalKind);
-                    }
-                }
-                else if (canonicalKind == "button" && e.canonical.shape != null)
-                {
-                    inst = BuildShapeButton(e, parent, ctx); // fallback: inline SDF shader
+                    inst = BuildShapeButton(e, parent, ctx); // inline SDF shader
                 }
                 else if (canonicalKind == "button" && e.canonical.states != null)
                 {
-                    inst = BuildStateButton(e, parent, ctx); // fallback: inline state PNGs
+                    inst = BuildStateButton(e, parent, ctx); // inline state PNGs
                 }
                 else if ((canonicalKind == "toggle" || canonicalKind == "radio") && e.canonical.shape != null)
                 {
@@ -395,6 +362,15 @@ namespace FigForge
                     ctx.log($"canonical {e.canonical.kind} '{e.canonical.Ref}' → placeholder");
                     inst = BuildPlaceholderButton(e, parent, ctx);
                 }
+                inst.name = ObjectName(e, canonicalKind);
+                // Retain the binding setup previously performed before saving a control prefab.
+                var bind = inst.GetComponent<FigForgeBindings>() ?? inst.AddComponent<FigForgeBindings>();
+                if (canonicalKind != "list" && canonicalKind != "table" && canonicalKind != "stepper"
+                    && canonicalKind != "modal" && canonicalKind != "toast")
+                {
+                    bind.label = inst.GetComponentInChildren<TMP_Text>(true);
+                    bind.control = inst.GetComponent<Selectable>();
+                }
                 // Radios of the SAME ref under one parent share a ToggleGroup (mutually
                 // exclusive), but distinct refs get distinct groups so independent radio
                 // sets under the same frame don't deselect each other.
@@ -421,7 +397,7 @@ namespace FigForge
                 ApplyTransform(inst.GetComponent<RectTransform>() ?? inst.AddComponent<RectTransform>(), e, ctx);
 
                 // Vanilla: one soft drop shadow behind the control (shader-free), added to the live
-                // INSTANCE so it works for cached prefab instances too. The shadow can live in a few
+                // control instance. The shadow can live in a few
                 // places: a toggle puts it on `shape`, a BUTTON puts it on its normal STATE shape
                 // (and RootShadowShape stores it under `shadows`, not `effects`) — so gather from all
                 // of them via ShapeShadows rather than reading one field.
@@ -441,7 +417,7 @@ namespace FigForge
                     }
                 }
 
-                // Fill the prefab's binding slots (label/value/options); else stamp label.
+                // Fill the control's binding slots (label/value/options); else stamp label.
                 var bindings = inst.GetComponentInChildren<FigForgeBindings>(true);
                 var iconSprite = SpriteByFile(e.canonical.iconAsset, ctx);
                 if (bindings != null) bindings.Apply(e.canonical.label, e.canonical.value, e.canonical.options, iconSprite);
@@ -455,7 +431,7 @@ namespace FigForge
                 // Per-instance label font override — only when we know the component
                 // font (defLabelFont) AND this instance genuinely differs from it.
                 // Without defLabelFont (older export) we can't tell a real override
-                // from the component default, so we leave the prefab's font alone.
+                // from the component default, so we leave the control's font alone.
                 if (e.canonical.labelFont != null && e.canonical.defLabelFont != null
                     && !SameFont(e.canonical.labelFont, e.canonical.defLabelFont))
                 {
@@ -470,7 +446,7 @@ namespace FigForge
                 }
 
                 // Per-instance shape override — an instance whose stroke/fill/corner
-                // was tweaked in Figma re-skins just this button (shared prefab intact).
+                // was tweaked in Figma re-skins just this button.
                 if (e.canonical.instanceShape != null)
                     ApplyInstanceShape(inst, e.canonical.instanceShape, e.canonical.stateColors, ctx);
 
@@ -4066,559 +4042,13 @@ namespace FigForge
                 && string.Equals(asy, bsy, System.StringComparison.OrdinalIgnoreCase);
         }
 
-        // ---- Canonical prefab: one Figma component → one reusable Unity prefab --
-        const string CanonicalFolder = "Assets/FigForge/Canonical";
+        // Export/import control-data contract. Keep in sync with plugin/src/types.ts.
+        internal const int CanonicalSchema = 64;
 
-        // Reuse control prefabs directly; their FigForgeBindings stores the definition signature.
-        static GameObject ResolveOrGenerateCanonicalPrefab(ElementData e, BuildContext ctx)
-        {
-            string kind = string.IsNullOrEmpty(e.canonical.kind) ? "button" : e.canonical.kind;
-            string refName = e.canonical.Ref;
-            if (string.IsNullOrEmpty(refName)) return null;
-            string sig = CanonicalSignature(e, kind, ctx.scaleFactor, ctx.vanilla);
-            bool signatureShare = CanShareCanonicalBySignature(e, kind);
-            // Only the FIRST element of a (kind, ref) in a build may regenerate the
-            // shared prefab — see BuildContext.resolvedCanonicalRefs.
-            string referenceKey = kind + "|" + refName;
-            bool firstThisBuild = ctx.resolvedCanonicalRefs.Add(referenceKey);
-            if (!firstThisBuild && ctx.canonicalByReference.TryGetValue(referenceKey, out var resolved) && resolved != null)
-                return resolved;
-
-            string path = $"{CanonicalFolder}/{CanonicalPrefabFile(refName)}.prefab";
-            var candidate = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            if (candidate != null)
-            {
-                var stamp = candidate.GetComponent<FigForgeBindings>();
-                if (!firstThisBuild || (stamp != null && stamp.signature == sig))
-                {
-                    ctx.canonicalByReference[referenceKey] = candidate;
-                    return candidate;
-                }
-                ctx.log($"canonical {kind} '{refName}' definition changed — regenerating prefab.");
-            }
-
-            if (signatureShare)
-            {
-                if (ctx.canonicalBySignature == null)
-                {
-                    ctx.canonicalBySignature = new Dictionary<string, GameObject>();
-                    if (UnityEditor.AssetDatabase.IsValidFolder(CanonicalFolder))
-                        foreach (var guid in UnityEditor.AssetDatabase.FindAssets("t:Prefab", new[] { CanonicalFolder }))
-                        {
-                            var existing = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(
-                                UnityEditor.AssetDatabase.GUIDToAssetPath(guid));
-                            var stamp = existing != null ? existing.GetComponent<FigForgeBindings>() : null;
-                            if (stamp != null && !string.IsNullOrEmpty(stamp.signature))
-                                ctx.canonicalBySignature[stamp.signature] = existing;
-                        }
-                }
-                if (ctx.canonicalBySignature.TryGetValue(sig, out var shared) && shared != null)
-                {
-                    var stamp = shared.GetComponent<FigForgeBindings>();
-                    if (stamp != null && stamp.signature == sig)
-                    {
-                        ctx.canonicalByReference[referenceKey] = shared;
-                        return shared;
-                    }
-                }
-            }
-
-            // Generate from the canonical definition, save (overwrites if present), register.
-            GameObject temp =
-                (kind == "button" && e.canonical.shape != null) ? BuildShapeButton(e, null, ctx)   // crisp SDF shader
-                : (kind == "button" && e.canonical.states != null) ? BuildStateButton(e, null, ctx) // exported state PNGs
-                : ((kind == "toggle" || kind == "radio") && e.canonical.shape != null) ? BuildToggle(e, null, ctx)
-                : (kind == "switch") ? BuildSwitch(e, null, ctx)
-                : (kind == "input") ? BuildInputField(e, null, ctx)
-                : (kind == "stepper") ? BuildStepper(e, null, ctx)
-                : (kind == "dropdown") ? BuildDropdown(e, null, ctx)
-                : (kind == "slider") ? BuildSlider(e, null, ctx)
-                : (kind == "progress") ? BuildProgress(e, null, ctx)
-                : (kind == "list") ? BuildList(e, null, ctx)
-                : (kind == "table") ? BuildTable(e, null, ctx)
-                : (kind == "modal") ? BuildModal(e, null, ctx)
-                : (kind == "toast") ? BuildToastHost(e, null, ctx)
-                : BuildPlaceholderButton(e, null, ctx);
-            if (temp == null) return candidate; // generation failed — keep whatever we had
-            temp.name = SafeAsset(refName);
-
-            // Wire binding slots so per-instance label/value apply onto the prefab.
-            var bind = temp.GetComponent<FigForgeBindings>() ?? temp.AddComponent<FigForgeBindings>();
-            if (kind != "list" && kind != "table" && kind != "stepper" && kind != "modal" && kind != "toast") // data-driven controls without one label/Selectable manage their own slots
-            {
-                bind.label = temp.GetComponentInChildren<TMP_Text>(true);
-                bind.control = temp.GetComponent<Selectable>();
-            }
-            bind.signature = sig; // stamp so a later definition change triggers regen
-
-            TextureImportHelper.EnsureFolder(CanonicalFolder);
-            GameObject prefab;
-            try
-            {
-                prefab = UnityEditor.PrefabUtility.SaveAsPrefabAsset(temp, path);
-            }
-            finally
-            {
-                // Always tear down the scratch GameObject so a throwing save does not
-                // leak a stray copy into the editing scene.
-                UnityEngine.Object.DestroyImmediate(temp);
-            }
-            if (prefab != null)
-            {
-                ctx.log($"generated canonical {kind} '{refName}' → {path}");
-                ctx.canonicalByReference[referenceKey] = prefab;
-                if (signatureShare) ctx.canonicalBySignature[sig] = prefab;
-            }
-            return prefab;
-        }
-
-        // A stable string of the DEFINITION fields that determine the generated
-        // prefab's look. When it changes, the prefab is regenerated. Excludes
-        // per-instance data (label text, position) and state-PNG filenames (which
-        // embed the instance name) so distinct instances don't thrash regeneration.
-        // Size is included because a component's visual definition includes the master
-        // bounds used to author the canonical control.
-        // Bump when the GENERATED prefab's component layout changes (not its data) so an
-        // importer upgrade auto-regenerates managed prefabs instead of leaving stale
-        // serialization behind. v2: FigForgeButtonStateColors → grouped FigForgeFill.
-        // v4: dropdown selected option fill + closed background hover/press fills.
-        // v5: dropdown arrow glyph switched to ASCII to avoid TMP fallback warnings.
-        // v6: dropdown background SDF moved to a child targetGraphic.
-        // v7: popup options no longer use TMP's checkmark box or ColorTint.
-        // v8: popup item hover state driven from Toggle item root.
-        // v9: dropdown Arrow renders from Figma sprite(s), not a TMP fallback glyph.
-        // v10: dropdown popup option states carry full shape style, not fill only.
-        // v11: dropdown popup rows get edge-aware first/middle/last corner rules.
-        // v12: dropdown popup shell uses option shape styling instead of a hard-edged white backing.
-        // v13: popup shell can be styled independently from the Options frame.
-        // v14: popup shell also masks dropdown option rows to its rounded silhouette.
-        // v15: popup shell falls back to the closed select-box shape before option rows.
-        // v16: generated input canonical prefabs build TMP_InputField instead of placeholders.
-        // v17: canonical procedural gradients carry full n-stop Gradient data.
-        // v18: generated buttons use Regular/RollOver/Pressed/HitArea child objects.
-        // v19: button root/state shapes preserve layered fills, strokes, and effects.
-        // v20: control backgrounds are raycastable (clickable toggle/radio/dropdown/input).
-        // v21: control backgrounds raycast UNCONDITIONALLY (not gated by disableRaycasts,
-        //      which defaults on and was suppressing clicks on toggle/radio/dropdown/input).
-        // v22: toggle/radio get a full-component HitArea (or captured "HitArea" layer) so
-        //      the whole Figma component frame is clickable, not just the small box.
-        // v23: canonical part visuals render as full Figma subtrees (render-only) when
-        //      partTrees present — nested children/fills/strokes/shadows/vectors/masks/text.
-        // v24: subtree parity extended to dropdown Background+Arrow and input Background.
-        // v25: subtree parity extended to the list container Background.
-        // v26: list rows clone the rich Item subtree (icon/title/subtitle/accessory) with
-        //      Regular/Rollover/Pressed/Selected states + single-select, and a pinned Header.
-        // v27: list rows come from captured per-row items (title+subtitle), bound per row.
-        // v28: canonical list part layers (row state backgrounds, Icon, container
-        //      Background) stay procedural instead of baking to PNG — Unity rebuilds
-        //      them via the SDF FigForgeRoundedRect path; the flat row Regular is a
-        //      tintable Image so FigForgeListRow's per-state recolour applies.
-        // v29: canonical controls are FigForge-owned types (FigForgeButton/Toggle/
-        //      Dropdown/InputField) with typed part refs (label/checkmark) wired here,
-        //      so generated frame accessors can return them strongly-typed.
-        // v30: the List is now prefab-backed like the other controls (shared prefab per
-        //      ref → edit-one-propagate); signature drops preview row count and folds
-        //      itemPressed/itemSelected/headerHeight as the visual fingerprint.
-        // NOTE: bumping this also busts the importer's screen-level reuse cache
-        // (folded into FigForgeImporterWindow.ManifestHash), so a schema change
-        // forces unchanged screens to rebuild and pick up the new generation.
-        // v31: toggle/radio Label spans full control height + vertical-middle alignment
-        //      (was MidlineLeft in a text-height-hugging box, which sat high).
-        // v32: same vertical-middle treatment for dropdown caption + input placeholder/
-        //      text; dropdown/input Background kept procedural (SDF) when shape covers it.
-        // v33: list content VerticalLayoutGroup controls child height, so rows honour their
-        //      LayoutElement rowHeight (stretch-anchored template clones laid out 0-high).
-        // v34: list rows find Title/Subtitle/Regular/HitArea case-insensitively (captured
-        //      subtree names are sanitized lowercase), always get a raycastable hit surface,
-        //      and serialize the state-colour binding (was lost entering play mode).
-        // v35: list viewport masks the background INTERIOR (inset past stroke + 1px AA, so
-        //      rows can't visually bleed at fractional scales) + styled uGUI Scrollbar from
-        //      the captured 'Scrollbar' layer (auto-hides when rows fit).
-        // v36: first/last list rows take the container's corner radii (top pair zeroed
-        //      under a Header), so header-less lists keep their rounded corners.
-        // v37: scrollbar interaction via plain transparent Images (bar + handle) with the
-        //      SDF shapes as render-only children; thumb hover/press tint from the captured
-        //      ThumbRollover/ThumbPressed layers (FigForgeScrollbarStates).
-        // v38: designer-defined list clipping — an explicit 'Mask' layer anchors the
-        //      viewport (scrollbar hugs its right edge), and the Figma frame's clipsContent
-        //      decides whether the list clips at all.
-        // v39: the Mask layer's own corner radius rounds the clip (rounded stencil mask,
-        //      correct at every scroll position); background-corner-derived row rounding
-        //      removed — the clip shape is entirely designer-owned.
-        // v40: default scrollbar width 6 -> 10 px (manifests without a captured width).
-        // v41: scrollbar lives INSIDE the viewport so the (rounded) mask clips it with
-        //      the rows.
-        // v42: FigForgeScrollRect clamps mouse-wheel overshoot (hard stop at the range);
-        //      drags keep the elastic bounce.
-        // v43: scrollbar hides when rows fit the viewport within a tolerance (mask insets
-        //      made AutoHide show a useless bar for a few px of overflow) + correct initial
-        //      state in edit mode.
-        // v44: canonical Slider — Track/Fill/Thumb per the stock uGUI slider hierarchy
-        //      (SDF visuals render-only, transparent-Image interaction), thumb hover/
-        //      press via FigForgeScrollbarStates, full-row HitArea targetGraphic,
-        //      optional Label; per-instance initial value via FigForgeBindings.
-        // v45: slider variants — authored [minValue..maxValue] range (value now RAW,
-        //      not a 0..1 ratio), slot snapping (FigForgeSlider.slots overrides
-        //      Slider.Set), and the 'Ticks' layer rendered as a render-only subtree.
-        // v46: slider live value read-out — the 'Value' layer becomes a TMP wired to
-        //      FigForgeSlider.tmpTxt_value (rewritten on every value change) and
-        //      FigForgeBindings.valueText.
-        // v47: canonical Table — the List's scroll shell (pinned Header, Mask clip,
-        //      overflow-only Scrollbar) with a TableRow template of m CellN columns
-        //      cloned per data row (FigForgeTable/FigForgeTableRow, SetRows API).
-        // v48: the clip's top edge snaps to the header bottom when the designer Mask
-        //      sits ≤4px below it — the creator's protective ~2px inset left a white
-        //      sliver under the header divider that read as a grey band; rows now
-        //      start flush with the header like the placed instances do in Figma.
-        // v49: canonical Progress bar — a slider with no thumb and no input (Track +
-        //      value-driven Fill, FigForgeProgress, optional percentage read-out);
-        //      a hidden 'Indeterminate' layer in the master flags the animated
-        //      sweep mode (play mode only).
-        // v50: Progress styles — ring/gauge (FigForgeRing arc mesh from the Track
-        //      ellipse's arcData: start/span/thickness, pie at thickness 1) and
-        //      segments (N lit/unlit block pairs from the Track frame's children);
-        //      per-style indeterminate animations (spin/bounce/scanner).
-        // v51: canonical Switch — Toggle plumbing with Track/Fill/Thumb visuals
-        //      (FigForgeSwitch slides the thumb, fill shows when on).
-        // v52: canonical Stepper — Minus/Plus canonical buttons around a numeric
-        //      input (FigForgeStepper, min/max/step from the tag).
-        // v53: input signature no longer folds per-instance placeholder/value —
-        //      five inputs with distinct placeholders regenerated the shared
-        //      prefab four times in ONE build, and each SaveAsPrefabAsset reset
-        //      the instances already placed (default 100×100 'inputfield' roots,
-        //      prefab-default placeholder). Regen is also gated to the first
-        //      same-ref element per build, and a plain reuse can no longer
-        //      overwrite the stored definition signature.
-        // v54: imported GameObject names prefer displayName (the original Figma
-        //      layer casing/spelling) instead of sanitized manifest names; group
-        //      accessors become scoped APIs instead of also leaking children flat.
-        // v55: generated group scopes and FigForge controls expose visibility helpers.
-        // v56: remove the old Visible aliases from generated groups/controls.
-        // v57: generated UIFrames core exposes After(seconds, action) delay helper.
-        // v58: UIFrames.After returns a chainable delay sequence with Cancel().
-        // v59: canonical Modal/Dialog and Toast/Notification controls.
-        // v60: canonical controls capture a child named Icon as a reusable sprite
-        //      and wire it through FigForgeBindings.icon / generated Icon slots.
-        // v64: dropdown popup clips its option rows with a DEDICATED rounded stencil
-        //      source (a near-invisible solid-fill SDF rect) on the Viewport, like
-        //      List/Table. The old path reused the captured popup background as the
-        //      Mask graphic, so a fill-less popup shape wrote no stencil and hid the
-        //      whole option list.
-        //
-        // Counterpart constant: plugin/src/types.ts CANONICAL_SCHEMA — the plugin
-        // stamps its number into the manifest (canonicalSchema) and ManifestParser
-        // warns when the two differ. Bump BOTH together.
-        internal const int CanonicalSchema = 64; // bumped: dropdown popup uses a dedicated stencil source (regen to re-apply)
-
-        // Invariant culture for every signature number: signatures persist in the
-        // committed library asset, so a comma-decimal locale (de-DE, fr-FR, …) must
-        // format identically to en-US — otherwise those machines never match a
-        // stored signature and churn-regenerate every canonical prefab.
-        static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
-
-        // Deterministic FNV-1a hash for signature terms (GetHashCode is randomized per run).
-        static string SigHash(string s)
-        {
-            ulong h = 14695981039346656037UL;
-            if (s != null) foreach (char ch in s) { h ^= ch; h *= 1099511628211UL; }
-            return h.ToString("x");
-        }
-
-        static string CanonicalSignature(ElementData e, string kind, float sf, bool vanilla)
-        {
-            var c = e.canonical;
-            var sb = new System.Text.StringBuilder();
-            // Vanilla and normal builds render the SAME shape data along different paths
-            // (baked sprite vs SDF shader), so they must NEVER share a generated prefab —
-            // discriminate the signature, or a vanilla import would reuse a cached SDF one.
-            sb.Append("v=").Append(CanonicalSchema).Append(";k=").Append(kind)
-              .Append(vanilla ? ";van=1" : "").Append(";sf=").Append(sf.ToString("0.###", Inv));
-            if (e.rect != null)
-                sb.Append(";sz=").Append(e.rect.w.ToString("0.###", Inv)).Append('x').Append(e.rect.h.ToString("0.###", Inv));
-            var sh = c.shape;
-            if (sh != null)
-                sb.Append(";cr=").Append(sh.cornerRadius.ToString("0.###", Inv))
-                  .Append(";cn=").Append(SigF(sh.corners))
-                  .Append(";f=").Append(SigF(sh.fill)).Append(";f2=").Append(SigF(sh.fill2))
-                  .Append(";fg=").Append(SigGradient(sh.gradient))
-                  .Append(";gt=").Append(SigF(sh.gradientTransform))
-                  .Append(";st=").Append(SigStroke(sh.stroke, sh.borderColor, sh.borderWidth, sh.borderAlign));
-            AppendShapeSig(sb, "btn", sh);
-            AppendShapeSig(sb, "root", c.rootShape);
-            AppendShapeSig(sb, "mdb", c.backdropShape);
-            AppendShapeSig(sb, "mdp", c.panelShape);
-            AppendShapeSig(sb, "tst", c.toastShape);
-            sb.Append(";tac=").Append(SigF(c.accentColor))
-              .Append(";sev=").Append(c.severity ?? "")
-              .Append(";pos=").Append(c.position ?? "")
-              .Append(";dur=").Append(c.duration.HasValue ? c.duration.Value.ToString("0.###", Inv) : "");
-            if (sh != null && sh.shadow != null)
-            {
-                var sd = sh.shadow;
-                sb.Append(";shc=").Append(SigF(sd.color)).Append(";sho=").Append(sd.offsetX.ToString("0.###", Inv)).Append(',').Append(sd.offsetY.ToString("0.###", Inv))
-                  .Append(";shb=").Append(sd.blur.ToString("0.###", Inv)).Append(";shs=").Append(sd.spread.ToString("0.###", Inv));
-            }
-            var sc = c.stateColors;
-            if (sc != null)
-                sb.Append(";sn=").Append(SigF(sc.normal)).Append(";sh=").Append(SigF(sc.highlighted)).Append(";sp=").Append(SigF(sc.pressed));
-            if (c.stateShapes != null)
-            {
-                AppendShapeSig(sb, "ssn", c.stateShapes.normal);
-                AppendShapeSig(sb, "ssh", c.stateShapes.highlighted);
-                AppendShapeSig(sb, "ssp", c.stateShapes.pressed);
-            }
-            // Input placeholder/value are deliberately NOT folded: both are
-            // per-instance (the exporter's instance override wins over the master
-            // capture), and FigForgeBindings.Apply stamps them on every instance at
-            // build time. Folding them made every differently-placeholdered input on
-            // a page regenerate the shared prefab mid-build (v53).
-            if (c.checkShape != null)
-            {
-                var cs = c.checkShape;
-                sb.Append(";ckcr=").Append(cs.cornerRadius.ToString("0.###", Inv))
-                  .Append(";ckcn=").Append(SigF(cs.corners))
-                  .Append(";ckf=").Append(SigF(cs.fill)).Append(";ckf2=").Append(SigF(cs.fill2))
-                  .Append(";ckfg=").Append(SigGradient(cs.gradient))
-                  .Append(";ckgt=").Append(SigF(cs.gradientTransform))
-                  .Append(";ckst=").Append(SigStroke(cs.stroke, cs.borderColor, cs.borderWidth, cs.borderAlign));
-            }
-            if (c.optionShape != null)
-            {
-                var os = c.optionShape;
-                sb.Append(";oh=").Append(c.optionHeight.ToString("0.###", Inv))
-                  .Append(";ocr=").Append(os.cornerRadius.ToString("0.###", Inv))
-                  .Append(";ocn=").Append(SigF(os.corners))
-                  .Append(";of=").Append(SigF(os.fill)).Append(";of2=").Append(SigF(os.fill2))
-                  .Append(";ofg=").Append(SigGradient(os.gradient))
-                  .Append(";ogt=").Append(SigF(os.gradientTransform))
-                  .Append(";ost=").Append(SigStroke(os.stroke, os.borderColor, os.borderWidth, os.borderAlign));
-                if (os.shadow != null)
-                {
-                    var sd = os.shadow;
-                    sb.Append(";oshc=").Append(SigF(sd.color)).Append(";osho=").Append(sd.offsetX.ToString("0.###", Inv)).Append(',').Append(sd.offsetY.ToString("0.###", Inv))
-                      .Append(";oshb=").Append(sd.blur.ToString("0.###", Inv)).Append(";oshs=").Append(sd.spread.ToString("0.###", Inv));
-                }
-            }
-            AppendShapeSig(sb, "pop", c.popupShape);
-            AppendShapeSig(sb, "ors", c.optionRolloverShape);
-            AppendShapeSig(sb, "ops", c.optionPressedShape);
-            AppendShapeSig(sb, "oss", c.optionSelectedShape);
-            sb.Append(";or=").Append(SigF(c.optionRollover)).Append(";op=").Append(SigF(c.optionPressed)).Append(";osel=").Append(SigF(c.optionSelected));
-            sb.Append(";aa=").Append(c.arrowAsset ?? "").Append(";aar=").Append(c.arrowRolloverAsset ?? "").Append(";aap=").Append(c.arrowPressedAsset ?? "");
-            sb.Append(";ac=").Append(SigF(c.arrowColor)).Append(";ar=").Append(SigF(c.arrowRollover)).Append(";ap=").Append(SigF(c.arrowPressed));
-            sb.Append(";bgr=").Append(SigF(c.bgRollover)).Append(";bgp=").Append(SigF(c.bgPressed));
-            if (c.itemShape != null)
-            {
-                var ish = c.itemShape;
-                sb.Append(";ih=").Append(c.itemHeight.ToString("0.###", Inv))
-                  .Append(";icr=").Append(ish.cornerRadius.ToString("0.###", Inv))
-                  .Append(";icn=").Append(SigF(ish.corners))
-                  .Append(";if=").Append(SigF(ish.fill)).Append(";if2=").Append(SigF(ish.fill2))
-                  .Append(";ifg=").Append(SigGradient(ish.gradient))
-                  .Append(";igt=").Append(SigF(ish.gradientTransform))
-                  .Append(";ist=").Append(SigStroke(ish.stroke, ish.borderColor, ish.borderWidth, ish.borderAlign));
-            }
-            // Per-instance preview row count is NOT folded in (it's design-time placeholder
-            // data; real rows come from FigForgeList.SetItems at runtime) so distinct list
-            // instances share one visual prefab instead of thrash-regenerating it.
-            sb.Append(";iro=").Append(SigF(c.itemRollover)).Append(";ipr=").Append(SigF(c.itemPressed)).Append(";isel=").Append(SigF(c.itemSelected));
-            sb.Append(";hh=").Append(c.headerHeight.ToString("0.###", Inv));
-            // Table grid: column count + the n×m cell texts. The rows are captured from
-            // the MASTER's placed Row instances (shared by every placed table), so folding
-            // them regenerates the prefab when a cell text is edited in Figma — without
-            // per-instance thrash.
-            if (c.columns > 0) sb.Append(";tcols=").Append(c.columns);
-            if (c.tableRows != null && c.tableRows.Count > 0)
-            {
-                var trows = new System.Text.StringBuilder();
-                foreach (var row in c.tableRows)
-                {
-                    if (row != null) foreach (var cell in row) trows.Append(cell ?? "").Append('\u001f');
-                    trows.Append('\u001e');
-                }
-                sb.Append(";trows=").Append(SigHash(trows.ToString()));
-            }
-            // Slider visuals + numeric behaviour (range/slots are baked into the
-            // prefab's Slider fields). `value` is deliberately NOT folded — it's
-            // per-instance (applied by FigForgeBindings), not part of the shared look.
-            AppendShapeSig(sb, "trk", c.trackShape);
-            AppendShapeSig(sb, "sfl", c.fillShape);
-            AppendShapeSig(sb, "thm", c.thumbShape);
-            sb.Append(";thr=").Append(SigF(c.thumbRollover)).Append(";thp=").Append(SigF(c.thumbPressed));
-            sb.Append(";smin=").Append(c.minValue.ToString("0.###", Inv)).Append(";smax=").Append(c.maxValue.ToString("0.###", Inv)).Append(";slt=").Append(c.slots);
-            AppendShapeSig(sb, "stm", c.minusShape);
-            AppendShapeSig(sb, "stp", c.plusShape);
-            AppendShapeSig(sb, "sti", c.inputShape);
-            sb.Append(";stmr=").Append(SigF(c.minusRollover)).Append(";stmp=").Append(SigF(c.minusPressed))
-              .Append(";stpr=").Append(SigF(c.plusRollover)).Append(";stpp=").Append(SigF(c.plusPressed));
-            sb.Append(";stml=").Append(c.minusLabel ?? "").Append(";stpl=").Append(c.plusLabel ?? "");
-            // Progress: trackShape/fillShape are folded above; the indeterminate flag,
-            // style, and per-style geometry are baked into the generated prefab
-            // (FigForgeProgress/FigForgeRing/segment children), so each must regen.
-            sb.Append(";ind=").Append(c.indeterminate ? 1 : 0);
-            if (!string.IsNullOrEmpty(c.progressStyle)) sb.Append(";pst=").Append(c.progressStyle);
-            sb.Append(";rst=").Append(c.ringStart.ToString("0.##", Inv))
-              .Append(";arc=").Append(c.arcSpan.ToString("0.##", Inv))
-              .Append(";rth=").Append(c.ringThickness.ToString("0.###", Inv))
-              .Append(";sgn=").Append(c.segments)
-              .Append(";sgp=").Append(c.segmentGap.ToString("0.##", Inv));
-            if (c.parts != null && c.parts.Count > 0)
-            {
-                var keys = new List<string>(c.parts.Keys);
-                keys.Sort(StringComparer.Ordinal);
-                foreach (var key in keys)
-                {
-                    var a = c.parts[key];
-                    sb.Append(";part=").Append(key).Append(':').Append(SigF(a));
-                }
-            }
-            // Full part subtrees: hash each (sorted by part) so a Figma edit to a part's
-            // nested visuals regenerates the prefab. Deterministic because the exporter
-            // emits stable Figma ids + rounded transforms.
-            if (c.partTrees != null && c.partTrees.Count > 0)
-            {
-                var pkeys = new List<string>(c.partTrees.Keys);
-                pkeys.Sort(StringComparer.Ordinal);
-                foreach (var key in pkeys)
-                {
-                    var tree = c.partTrees[key];
-                    sb.Append(";ptree=").Append(key).Append(':')
-                      .Append(tree != null ? SigHash(JsonConvert.SerializeObject(tree)) : "0");
-                }
-            }
-            bool hasStates = c.states != null && (c.states.normal != null || c.states.highlighted != null || c.states.pressed != null);
-            sb.Append(";hasShape=").Append(sh != null ? 1 : 0).Append(";hasStates=").Append(hasStates ? 1 : 0);
-            if (c.defLabelFont != null)
-                sb.Append(";lf=").Append(c.defLabelFont.family ?? "").Append('/').Append(c.defLabelFont.style ?? "");
-            if (c.defLabelFontSize.HasValue) sb.Append(";lfs=").Append(c.defLabelFontSize.Value.ToString("0.###", Inv));
-            return sb.ToString();
-        }
-
-        static void AppendShapeSig(System.Text.StringBuilder sb, string prefix, CanonicalShape sh)
-        {
-            if (sh == null) return;
-            sb.Append(';').Append(prefix).Append("asset=").Append(sh.asset ?? "")
-              .Append(';').Append(prefix).Append("vec=").Append(SigVector(sh.vector))
-              .Append(';').Append(prefix).Append("op=").Append(sh.opacity.ToString("0.###", Inv))
-              .Append(';').Append(prefix).Append("bm=").Append(sh.blendMode ?? "")
-              .Append(';').Append(prefix).Append("cr=").Append(sh.cornerRadius.ToString("0.###", Inv))
-              .Append(';').Append(prefix).Append("cn=").Append(SigF(sh.corners))
-              .Append(';').Append(prefix).Append("f=").Append(SigF(sh.fill))
-              .Append(';').Append(prefix).Append("f2=").Append(SigF(sh.fill2))
-              .Append(';').Append(prefix).Append("fg=").Append(SigGradient(sh.gradient))
-              .Append(';').Append(prefix).Append("gt=").Append(SigF(sh.gradientTransform))
-              .Append(';').Append(prefix).Append("st=").Append(SigStroke(sh.stroke, sh.borderColor, sh.borderWidth, sh.borderAlign));
-            if (sh.fills != null)
-                for (int i = 0; i < sh.fills.Count; i++)
-                    sb.Append(';').Append(prefix).Append("fill").Append(i).Append('=').Append(SigFill(sh.fills[i]));
-            if (sh.strokes != null)
-                for (int i = 0; i < sh.strokes.Count; i++)
-                    sb.Append(';').Append(prefix).Append("stroke").Append(i).Append('=').Append(SigStroke(sh.strokes[i], null, 0f, null));
-            var effects = ShapeShadows(sh);
-            if (effects != null)
-                for (int i = 0; i < effects.Count; i++)
-                {
-                    var sd = effects[i];
-                    sb.Append(';').Append(prefix).Append("effect").Append(i).Append('=')
-                      .Append(EffectKind(sd)).Append(',')
-                      .Append(SigF(sd.color)).Append(',')
-                      .Append(sd.offsetX.ToString("0.###", Inv)).Append(',')
-                      .Append(sd.offsetY.ToString("0.###", Inv)).Append(',')
-                      .Append(sd.blur.ToString("0.###", Inv)).Append(',')
-                      .Append(sd.spread.ToString("0.###", Inv)).Append(',')
-                      .Append(sd.blurMode ?? "").Append(',')
-                      .Append((sd.startBlur ?? 0f).ToString("0.###", Inv)).Append(',')
-                      .Append((sd.endBlur ?? 0f).ToString("0.###", Inv));
-                }
-        }
-
-        static bool CanShareCanonicalBySignature(ElementData e, string kind)
-        {
-            return e.canonical != null;
-        }
-
+        // Keep the existing shadow-colour comparison precision independent of locale.
         static string SigF(float[] a)
-            => a == null ? "_" : string.Join(",", System.Array.ConvertAll(a, x => x.ToString("0.###", Inv)));
-
-        // Compact, stable fingerprint of a vector drawing so geometry/colour edits
-        // trigger a prefab regen. Folds counts + a rolling hash of verts/colours.
-        static string SigVector(VectorDrawing v)
-        {
-            if (!HasVector(v)) return "_";
-            unchecked
-            {
-                int h = 17;
-                if (v.bounds != null) for (int i = 0; i < v.bounds.Length; i++) h = h * 31 + v.bounds[i].GetHashCode();
-                int totalV = 0, totalT = 0, totalA = 0;
-                foreach (var m in v.meshes)
-                {
-                    if (m == null) continue;
-                    if (m.color != null) for (int i = 0; i < m.color.Length; i++) h = h * 31 + m.color[i].GetHashCode();
-                    if (m.alpha != null) { totalA += m.alpha.Count; for (int i = 0; i < m.alpha.Count; i++) h = h * 31 + m.alpha[i].GetHashCode(); }
-                    if (m.verts != null) { totalV += m.verts.Count; for (int i = 0; i < m.verts.Count; i++) h = h * 31 + m.verts[i].GetHashCode(); }
-                    if (m.tris != null) { totalT += m.tris.Count; for (int i = 0; i < m.tris.Count; i++) h = h * 31 + m.tris[i]; }
-                }
-                return v.meshes.Count + "/" + totalV + "/" + totalT + "/" + totalA + "/" + h.ToString("x");
-            }
-        }
-
-        static string SigGradient(Fill f)
-        {
-            if (f == null) return "_";
-            var sb = new System.Text.StringBuilder();
-            sb.Append(f.gradient ?? "").Append(':').Append(SigF(f.transform));
-            if (f.stops != null)
-                for (int i = 0; i < f.stops.Count; i++)
-                    sb.Append('|').Append(f.stops[i].position.ToString("0.###", Inv)).Append('=').Append(SigF(f.stops[i].color));
-            return sb.ToString();
-        }
-
-        static string SigStroke(Stroke stroke, float[] legacyColor, float legacyWidth, string legacyAlign)
-        {
-            if (stroke != null)
-                return SigF(stroke.color) + "," + SigFill(stroke.fill) + "," + stroke.weight.ToString("0.###", Inv) + "," + (stroke.align ?? "") + "," + (stroke.dashed ? "d" : "s") + "," + SigDash(stroke.dashPattern);
-            return SigF(legacyColor) + "," + legacyWidth.ToString("0.###", Inv) + "," + (legacyAlign ?? "");
-        }
-
-        static string SigDash(List<float> dashPattern)
-        {
-            if (dashPattern == null || dashPattern.Count == 0) return "";
-            var sb = new StringBuilder();
-            for (int i = 0; i < dashPattern.Count; i++)
-            {
-                if (i > 0) sb.Append('/');
-                sb.Append(dashPattern[i].ToString("0.###", Inv));
-            }
-            return sb.ToString();
-        }
-
-        static string SigFill(Fill f)
-        {
-            if (f == null) return "_";
-            if (f.kind == "solid") return "solid:" + SigF(f.color);
-            if (f.kind == "gradient") return "grad:" + SigGradient(f);
-            return (f.kind ?? "") + ":" + (f.asset ?? "") + ":" + (f.scaleMode ?? "");
-        }
-
-        static string SafeAsset(string s)
-        {
-            s = string.IsNullOrEmpty(s) ? "Canonical" : s;
-            var a = new char[s.Length];
-            for (int i = 0; i < s.Length; i++) a[i] = char.IsLetterOrDigit(s[i]) ? s[i] : '_';
-            return new string(a);
-        }
-
-        // Prefab file stem for a canonical ref. SafeAsset maps every non-alphanumeric
-        // char to '_', so two distinct refs differing only in punctuation/whitespace
-        // (e.g. "Btn/Primary" vs "Btn-Primary") would sanitize to the SAME file and
-        // silently overwrite each other. When sanitization is lossy, append a stable
-        // hash of the FULL ref so distinct refs map to distinct files; clean alphanumeric
-        // refs keep their pristine name. Deterministic per ref, so reuse survives re-import.
-        static string CanonicalPrefabFile(string refName)
-        {
-            string safe = SafeAsset(refName);
-            return safe == refName ? safe : $"{safe}_{SigHash(refName)}";
-        }
+            => a == null ? "_" : string.Join(",", System.Array.ConvertAll(a,
+                x => x.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)));
 
         static void AddTransparentRaycastTarget(GameObject go)
         {

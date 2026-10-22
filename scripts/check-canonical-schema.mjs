@@ -175,8 +175,8 @@ if (onlyTs.length || onlyCs.length) {
 // (4) Every exported control kind must have a prefab construction branch.
 // Check the actual builder now that the separate canonical library is removed.
 const canonicalBuilder = hierarchyCs.slice(
-  hierarchyCs.indexOf('static GameObject ResolveOrGenerateCanonicalPrefab('),
-  hierarchyCs.indexOf('// A stable string of the DEFINITION fields'),
+  hierarchyCs.indexOf('static GameObject BuildElement('),
+  hierarchyCs.indexOf('// Radios of the SAME ref'),
 );
 
 // TS: `export type CanonicalKind = 'a' | 'b' | …;` → the quoted literals.
@@ -190,20 +190,20 @@ const tsKinds = [...tsUnionDecl.matchAll(/'([^']+)'/g)].map((m) => m[1].toLowerC
 
 // C#: explicit kind comparisons in the prefab construction method.
 const csKindCases = new Set(
-  [...canonicalBuilder.matchAll(/kind\s*==\s*"([^"]+)"/g)].map((m) => m[1].toLowerCase()),
+  [...canonicalBuilder.matchAll(/canonicalKind\s*==\s*"([^"]+)"/g)].map((m) => m[1].toLowerCase()),
 );
 
 const missingKinds = tsKinds.filter((k) => !csKindCases.has(k));
 if (missingKinds.length) {
   fail(
     `✗ CanonicalKind coverage gap: the TS union (plugin/src/types.ts) lists kind(s) ` +
-      `[${missingKinds.map((k) => `'${k}'`).join(', ')}] that the canonical prefab builder ` +
+      `[${missingKinds.map((k) => `'${k}'`).join(', ')}] that the inline control builder ` +
       `(unity/Editor/HierarchyBuilder.cs) does NOT handle — those instances would fail to ` +
-      `resolve their prefab.\n` +
-      `  Add a matching construction branch to ResolveOrGenerateCanonicalPrefab.`,
+      `build their control.\n` +
+      `  Add a matching construction branch to BuildElement.`,
   );
 } else {
-  console.log(`✓ CanonicalKind coverage: all ${tsKinds.length} TS kinds handled by the prefab builder`);
+  console.log(`✓ CanonicalKind coverage: all ${tsKinds.length} TS kinds handled by the inline control builder`);
 }
 
 process.exit(failed ? 1 : 0);

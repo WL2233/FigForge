@@ -1,8 +1,8 @@
 // =============================================================================
-// FigForge — binding slots on a canonical UI prefab. The importer fills these
+// FigForge — binding slots on an imported UI control. The importer fills these
 // from the Figma instance (label text, icon sprite, dropdown options, initial
-// value) without knowing the prefab's internal layout. Leave a slot empty to
-// skip it. If a canonical prefab has no FigForgeBindings, the importer falls
+// value) without knowing the control's internal layout. Leave a slot empty to
+// skip it. If a control has no FigForgeBindings, the importer falls
 // back to child-name matching (a child literally named "Label", "Icon", …).
 // =============================================================================
 
@@ -22,18 +22,12 @@ namespace FigForge
         public Image icon;
         public Graphic background;
 
-        [Header("Control (assign the one this prefab is)")]
+        [Header("Control (assign the control type)")]
         public Selectable control;     // Button / Toggle / Slider / TMP_InputField / TMP_Dropdown root
         public FigForgeProgress progress; // progress bar (value-driven, not a Selectable — takes no input)
         public FigForgeStepper stepper; // numeric stepper (input + +/- buttons)
         public TMP_Text valueText;     // input display / value label
         public TMP_Dropdown optionsTarget; // dropdown
-
-        // Signature of the canonical DEFINITION this prefab was generated from
-        // (shape/colours/font/scale). The importer regenerates the prefab when the
-        // Figma component changes (signature differs). Empty = hand-made → never
-        // auto-regenerated. Editor-only concern; ignored at runtime.
-        [HideInInspector] public string signature;
 
         /// <summary>Apply manifest canonical data to the bound slots. Editor-time.</summary>
         public void Apply(string labelText, string value, List<string> options, Sprite iconSprite = null)

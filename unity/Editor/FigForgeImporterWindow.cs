@@ -56,7 +56,7 @@ namespace FigForge
         // ---- ui state ----
         Vector2 _scroll, _logScroll;
         readonly List<(string msg, MessageType kind)> _log = new List<(string, MessageType)>();
-        bool _showCanvas, _showFonts, _showTextures, _showCanonical;
+        bool _showCanvas, _showFonts, _showTextures;
 
         WindowStyles _styles;
 
@@ -249,7 +249,6 @@ namespace FigForge
         {
             _showCanvas = false;
             _showFonts = true;
-            _showCanonical = false;
             _showTextures = false;
         }
 
@@ -327,7 +326,6 @@ namespace FigForge
             {
                 CanvasSection();
                 FontSection();
-                CanonicalSection();
                 TextureSection();
                 BuildBar();
             }
@@ -520,27 +518,6 @@ namespace FigForge
                             var next = (TMP_FontAsset)EditorGUILayout.ObjectField(key, cur, typeof(TMP_FontAsset), false);
                             _fontMap[key] = next;
                         }
-                }
-            }
-        }
-
-        void CanonicalSection()
-        {
-            int refCount = _manifest.canonicalRefs?.Count ?? 0;
-            using (new EditorGUILayout.VerticalScope(_styles.card))
-            {
-                _showCanonical = Foldout(_showCanonical, $"Canonical elements ({refCount})");
-                if (!_showCanonical) return;
-                using (new EditorGUI.IndentLevelScope())
-                {
-                    if (refCount > 0)
-                    {
-                        EditorGUILayout.LabelField("Referenced by this design:", _styles.sectionTitle);
-                        foreach (var r in _manifest.canonicalRefs)
-                            EditorGUILayout.LabelField($"   {r}", _styles.subtleLabel);
-                        EditorGUILayout.HelpBox("Reusable control prefabs are generated in Assets/FigForge/Canonical.", MessageType.Info);
-                    }
-                    else EditorGUILayout.LabelField("No canonical references (name layers Btn_<instance>_<ref>).", _styles.subtleLabel);
                 }
             }
         }

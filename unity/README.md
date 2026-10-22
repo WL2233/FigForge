@@ -8,11 +8,11 @@ Install this UPM package, then open **Window → FigForge → Importer**.
 
 Outputs are uGUI `.prefab` assets. Matching output filenames are overwritten on reimport. The importer builds in a temporary preview scene and closes it after saving; it does not assemble or update your open scene.
 
-The importer does not generate C# accessor scripts or a Canonical Library asset. Pages retain their base FigForgeFrame, container components, runtime element registry and navigation. Reusable control prefabs remain in Assets/FigForge/Canonical; their stored signatures drive reuse and updates.
+The importer does not generate C# accessor scripts or a Canonical Library asset. Pages retain their base FigForgeFrame, container components, runtime element registry and navigation. Controls are built directly inside each page prefab. No Canonical folder, intermediate control prefabs, signature cache or library lookup is created. The exported control definitions are still consumed to preserve visuals, state transitions and bindings.
 
 Sprites are copied to Assets/FigForge/Sprites/<screen>/AltasImgs or RawImgs, preserving the bundle category and export filename. Legacy bundles without categories use AltasImgs only when both PNG dimensions are below 512; other PNGs use RawImgs. Existing flat sprites are moved through AssetDatabase when possible to preserve their GUIDs.
 
-When upgrading an existing Unity project, previously generated scripts and library assets are not deleted automatically. Rebuild affected page prefabs with this importer and migrate application calls to the runtime APIs before removing old Generated files and the old library asset. Custom prefab mappings from the removed library are no longer supported.
+When upgrading an existing Unity project, previously generated scripts and library assets are not deleted automatically. Rebuild affected page prefabs with this importer and migrate application calls to the runtime APIs before removing old Generated files and the old library asset. Old Canonical prefabs are not deleted automatically; rebuild every page that references them before removing those assets. Custom prefab mappings from the removed library are no longer supported.
 
 Place prefabs under your own Canvas and supply your application's navigation and EventSystem. Camera-based blend compositing requires an appropriately configured Canvas/camera.
 
