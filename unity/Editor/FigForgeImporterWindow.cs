@@ -498,6 +498,8 @@ namespace FigForge
             if (string.IsNullOrEmpty(manifestPath)) return;
 
             RefreshManifests();
+            var projectIdx = _projectPaths.IndexOf(manifestPath);
+            if (projectIdx >= 0) _selectedProject = projectIdx;
             var idx = _manifestPaths.IndexOf(manifestPath);
             if (idx >= 0) { _selected = idx; LoadSelected(); }
             FocusFontsFoldout();

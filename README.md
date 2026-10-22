@@ -11,6 +11,8 @@ Figma → ZIP → Unity uGUI Prefab.
 
 A frame ZIP contains `manifest.json` and PNG assets. A page ZIP contains `project.json` and a bundle for each frame. Each frame produces its own `.prefab`; page generation rejects duplicate sanitized frame filenames.
 
+PNG files are stored once per SHA-256 content hash under `Imgs/AltasImgs/` (both dimensions below 512 pixels) or `Imgs/RawImgs/` (either dimension at least 512 pixels), using actual exported PNG dimensions. Frame manifests reference `Imgs/...`; page bundles share one root `Imgs/` beside `project.json`, with each screen manifest referencing `../Imgs/...`. References include nested control parts and state sprites. Deduplication applies within one downloaded ZIP; separately downloaded ZIPs remain self-contained.
+
 The importer preserves anchors, text, fills, strokes, raster assets and canonical controls. Generated C# accessors are attached and wired to prefab assets after Unity imports the scripts. Existing output prefabs with the same filename are replaced; keep hand-authored changes in variants or separate assets.
 
 Generation uses a temporary preview scene and closes it after saving. It does not assemble a scene, camera, event system or cross-page navigation. Place the resulting prefabs under your application's Canvas and configure navigation there. Blend compositing requires a suitable camera-backed Canvas at runtime.

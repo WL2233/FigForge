@@ -2,6 +2,7 @@
 // FigForge — UI thread (iframe)
 // =============================================================================
 
+import { AssetBundle } from './asset-bundle';
 import {
   MANIFEST_VERSION,
   PROJECT_SCHEMA,
@@ -686,8 +687,11 @@ async function downloadBundle(manifestJson: string, assets: BinaryAsset[]) {
   if (!jszipAvailable()) return;
   try {
     const zip = new JSZip();
-    zip.file('manifest.json', manifestJson);
-    for (const a of assets) zip.file(a.name, a.data); // JSZip takes Uint8Array natively
+    const images = new AssetBundle();
+    zip.folder('Imgs/AltasImgs');
+    zip.folder('Imgs/RawImgs');
+    zip.file('manifest.json', await images.manifest(manifestJson, assets));
+    for (const [path, data] of images.files) zip.file(path, data);
     const blob = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(blob);
     const screen = JSON.parse(manifestJson).screen?.name || 'figforge';
@@ -697,7 +701,7 @@ async function downloadBundle(manifestJson: string, assets: BinaryAsset[]) {
     a.click();
     URL.revokeObjectURL(url);
     // Success is only claimed HERE — after the zip blob is handed to the browser.
-    setStatus(`Exported ${assets.length} asset(s). Bundle downloaded.`);
+    setStatus(`Exported ${images.files.size} unique asset(s). Bundle downloaded.`);
   } catch (e) {
     setStatus(`Bundle packaging failed — ${String((e as Error)?.message || e)}; bundle not saved.`, true);
   }
@@ -714,7 +718,10 @@ async function downloadProjectBundle(project: { name: string; initial: string },
   if (!jszipAvailable()) return;
   try {
     const zip = new JSZip();
-    const used = new Set<string>();
+    const used = new Set<string>(['imgs']);
+    const images = new AssetBundle();
+    zip.folder('Imgs/AltasImgs');
+    zip.folder('Imgs/RawImgs');
     const index: Project = {
       schema: PROJECT_SCHEMA,
       version: MANIFEST_VERSION,
@@ -725,14 +732,15 @@ async function downloadProjectBundle(project: { name: string; initial: string },
       screens: [],
     };
     for (const s of screens) {
-      let folder = s.name || 'screen';
+      const base = s.name.replace(/[^a-z0-9_-]+/gi, '_') || 'screen';
+      let folder = base;
       let n = 1;
-      while (used.has(folder)) folder = `${s.name}_${n++}`;
-      used.add(folder);
-      zip.file(`${folder}/manifest.json`, s.manifest);
-      for (const a of s.assets) zip.file(`${folder}/${a.name}`, a.data); // Uint8Array, native to JSZip
+      while (used.has(folder.toLowerCase())) folder = `${base}_${n++}`;
+      used.add(folder.toLowerCase());
+      zip.file(`${folder}/manifest.json`, await images.manifest(s.manifest, s.assets, '../'));
       index.screens.push({ name: s.name, manifest: `${folder}/manifest.json`, section: s.section || '', role: s.role || 'screen' });
     }
+    for (const [path, data] of images.files) zip.file(path, data);
     zip.file('project.json', JSON.stringify(index, null, 2));
     const blob = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(blob);

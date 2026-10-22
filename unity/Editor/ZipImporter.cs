@@ -1,8 +1,8 @@
 // =============================================================================
 // FigForge — import a FigForge export .zip directly (no manual unzip).
 //
-// A FigForge export bundle is a flat zip: manifest.json + the PNG assets at the
-// root. This extracts it into an Assets-relative folder, then the normal build
+// A FigForge export bundle contains JSON manifests and relative PNG paths.
+// This preserves its directories in an Assets-relative folder, then the normal build
 // pipeline (ManifestParser → TextureImportHelper → HierarchyBuilder) takes over.
 //
 // Uses System.IO.Compression.ZipArchive directly (stream-per-entry) so it does
@@ -39,7 +39,8 @@ namespace FigForge
                 string destAbs = Path.Combine(projectRoot, destAssetsFolder.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(destAbs);
 
-                bool hasManifest = false;
+                string manifestEntry = null;
+                bool hasProject = false;
                 int files = 0;
 
                 using (var fs = File.OpenRead(zipPath))
@@ -47,21 +48,24 @@ namespace FigForge
                 {
                     foreach (var entry in archive.Entries)
                     {
-                        // Flatten: export zips are flat, so take only the file
-                        // name. This also neutralises any zip-slip "../" entries.
-                        var name = Path.GetFileName(entry.FullName);
-                        if (string.IsNullOrEmpty(name)) continue; // directory entry
+                        var name = entry.FullName.Replace('\\', '/');
+                        if (name.EndsWith("/")) continue;
 
                         try
                         {
-                            var outPath = Path.Combine(destAbs, name);
+                            var outPath = Path.GetFullPath(Path.Combine(destAbs, name));
+                            if (Path.IsPathRooted(name) || name.Contains(":") ||
+                                !outPath.StartsWith(Path.GetFullPath(destAbs) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                                throw new IOException("ZIP entry escapes the import directory");
+                            Directory.CreateDirectory(Path.GetDirectoryName(outPath));
                             using (var es = entry.Open())
                             using (var os = File.Create(outPath))
                                 es.CopyTo(os);
 
                             files++;
-                            if (name.Equals("manifest.json", StringComparison.OrdinalIgnoreCase))
-                                hasManifest = true;
+                            if (Path.GetFileName(name).Equals("manifest.json", StringComparison.OrdinalIgnoreCase) &&
+                                (manifestEntry == null || name == "manifest.json")) manifestEntry = name;
+                            if (name.Equals("project.json", StringComparison.OrdinalIgnoreCase)) hasProject = true;
                         }
                         catch (Exception entryEx)
                         {
@@ -73,7 +77,7 @@ namespace FigForge
                     }
                 }
 
-                if (!hasManifest)
+                if (manifestEntry == null)
                 {
                     Debug.LogError("[FigForge] zip has no manifest.json — not a FigForge export.");
                     return null;
@@ -81,7 +85,7 @@ namespace FigForge
 
                 AssetDatabase.Refresh();
                 Debug.Log($"[FigForge] extracted {files} file(s) → {destAssetsFolder}");
-                return $"{destAssetsFolder}/manifest.json";
+                return $"{destAssetsFolder}/{(hasProject ? "project.json" : manifestEntry)}";
             }
             catch (Exception e)
             {
