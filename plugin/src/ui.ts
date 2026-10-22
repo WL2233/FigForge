@@ -37,6 +37,7 @@ let expandedNodes = new Set<string>();
 type TreeFilter = 'all' | 'exported' | 'hidden' | 'merged' | 'canonical';
 type PreviewZoomMode = 'fit' | 'actual' | 'manual';
 interface UiPrefs {
+  controls?: Record<string, string | boolean>;
   scale?: string;
   chips?: Record<string, boolean>;
   componentsPage?: boolean;
@@ -50,6 +51,19 @@ interface UiPrefs {
 }
 
 const PREFS_KEY = 'figforge.ui.prefs';
+// Keep edits in memory until the user explicitly saves. localStorage is only a
+// migration source; Figma's main-thread clientStorage owns durable settings.
+let workingPrefs: UiPrefs = readLegacyPrefs();
+const settingsControls = Array.from(document.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+  'input:not([type="file"]), select'
+)).filter((el) => el.id !== 'search');
+const controlKey = (el: HTMLInputElement | HTMLSelectElement) => el.id || el.closest('[id]')?.id || '';
+const defaultControls = captureControls();
+function captureControls(): Record<string, string | boolean> {
+  return Object.fromEntries(settingsControls.map((el) => [controlKey(el),
+    el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value]));
+}
+document.body.inert = true;
 const DEFAULT_FONT_FACE_DILATE = 0.15;
 const TREE_FILTERS = new Set<TreeFilter>(['all', 'exported', 'hidden', 'merged', 'canonical']);
 const hasTreeFilters = Boolean(document.getElementById('treeFilters'));
@@ -59,7 +73,7 @@ let previewObjectUrl: string | null = null;
 let previewZoom = 1;
 let previewZoomMode: PreviewZoomMode = 'fit';
 
-function readPrefs(): UiPrefs {
+function readLegacyPrefs(): UiPrefs {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
     if (!raw) return {};
@@ -70,13 +84,8 @@ function readPrefs(): UiPrefs {
   }
 }
 
-function savePrefs(patch: UiPrefs) {
-  try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ ...readPrefs(), ...patch }));
-  } catch {
-    // Figma can deny storage in some runtimes; preferences are best-effort.
-  }
-}
+function readPrefs(): UiPrefs { return workingPrefs; }
+function savePrefs(patch: UiPrefs) { workingPrefs = { ...workingPrefs, ...patch }; }
 
 function readTreeFilter(value: unknown): TreeFilter {
   return typeof value === 'string' && TREE_FILTERS.has(value as TreeFilter) ? (value as TreeFilter) : 'all';
@@ -1100,10 +1109,47 @@ if (bridgeTokenEl) {
 }
 
 setMcp('off');
-if (readPrefs().mcpDesired) {
-  wantConnected = true;
-  connectMcp();
+
+
+function applySettings(prefs: UiPrefs) {
+  disconnectMcp();
+  workingPrefs = prefs;
+  const values = { ...defaultControls, ...prefs.controls };
+  // Migrate settings saved by older UI versions.
+  for (const key of ['scale', 'unityPort', 'unityToken', 'bridgeToken', 'fontFaceDilate'] as const) {
+    if (typeof prefs[key] === 'string') values[key] = prefs[key]!;
+  }
+  if (typeof prefs.componentsPage === 'boolean') values.componentsPageChk = prefs.componentsPage;
+  Object.assign(values, prefs.chips || {});
+  for (const el of settingsControls) {
+    const value = values[controlKey(el)];
+    if (el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio')) {
+      if (typeof value === 'boolean') el.checked = value;
+      el.closest('.chip')?.classList.toggle('on', el.checked);
+    } else if (typeof value === 'string') {
+      if (!(el instanceof HTMLSelectElement) || Array.from(el.options).some((o) => o.value === value)) el.value = value;
+    }
+  }
+  syncSliderOptInputs();
+  syncProgressOptInputs();
+  activeTreeFilter = readTreeFilter(prefs.treeFilter);
+  renderTree();
+  lastPreset = prefs.windowPreset === 'S' || prefs.windowPreset === 'L' ? prefs.windowPreset : 'M';
+  setSizePresetUi(lastPreset);
+  post({ type: 'resize-ui', preset: minimized ? 'mini' : lastPreset });
+  if (prefs.mcpDesired) { wantConnected = true; connectMcp(); }
 }
+
+const saveSettingsBtn = $('#saveSettingsBtn') as HTMLButtonElement;
+saveSettingsBtn.addEventListener('click', () => {
+  saveSettingsBtn.disabled = true;
+  post({ type: 'save-settings', prefs: { ...workingPrefs, controls: captureControls() } });
+  setStatus('正在保存设置…');
+});
+$('#resetSettingsBtn').addEventListener('click', () => {
+  applySettings({});
+  setStatus('已恢复默认设置；点击“Apply”后，下次打开将使用默认设置。');
+});
 
 // ---------------------------------------------------------------------------
 // main → ui
@@ -1113,6 +1159,19 @@ window.onmessage = (event: MessageEvent) => {
   if (!msg || !msg.type) return;
 
   switch (msg.type) {
+    case 'settings-loaded':
+      applySettings(msg.prefs && typeof msg.prefs === 'object' ? msg.prefs : workingPrefs);
+      document.body.inert = false;
+      break;
+    case 'settings-saved':
+      saveSettingsBtn.disabled = false;
+      setStatus('当前设置已保存，下次打开会自动加载。');
+      break;
+    case 'settings-error':
+      document.body.inert = false;
+      saveSettingsBtn.disabled = false;
+      setStatus(`设置${msg.operation === 'load' ? '读取' : '保存'}失败：${msg.error}`);
+      break;
     case 'selection-info':
       const previousRootId = currentTree?.id;
       currentTree = msg.tree;
@@ -1228,3 +1287,6 @@ window.onmessage = (event: MessageEvent) => {
       break;
   }
 };
+
+// Request after installing the receiver, avoiding a startup message race.
+post({ type: 'load-settings' });

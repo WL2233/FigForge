@@ -111,11 +111,148 @@ namespace FigForge
             }
         }
 
+        // A saved snapshot is local to this user and Unity project.
+        string SettingsKey => "FigForge.Importer.Settings.v1." + Application.dataPath;
+
+        sealed class SavedSettings
+        {
+            public UIBackend backend = UIBackend.uGUI;
+            public string uitkOutFolder = "Assets/FigForge/UI";
+            public bool uitkCreateDoc = true;
+            public OutputMode output = OutputMode.Scene;
+            public ScalePreset scalePreset = ScalePreset.MatchFigma;
+            public float customRefHeight = 1080f;
+            public bool newCanvas = false;
+            public bool connectedScene = true;
+            public bool disableRaycasts = true;
+            public bool includeGroupsInAccessors = true;
+            public bool componentsOnlyAccessors = true;
+            public int warmUpBatchSize = DefaultWarmUpBatchSize;
+            public int editorColumns = DefaultEditorColumns;
+            public string spriteFolder = "Assets/FigForge/Sprites";
+            public string prefabFolder = "Assets/FigForge/Prefabs";
+            public TextureImportSettings tex = new TextureImportSettings();
+            public AtlasSettings atlas = new AtlasSettings();
+            public string canvasId;
+            public string libraryId;
+            public Dictionary<string, string> fonts = new Dictionary<string, string>();
+            public bool liveEnabled = true;
+            public int livePort = 1995;
+        }
+
+        static string ObjectId(Object value) => value == null ? null : GlobalObjectId.GetGlobalObjectIdSlow(value).ToString();
+        static T ResolveObject<T>(string value) where T : Object
+            => !string.IsNullOrEmpty(value) && GlobalObjectId.TryParse(value, out var id) ? GlobalObjectId.GlobalObjectIdentifierToObjectSlow(id) as T : null;
+
+        void SaveSettings(bool notify = true)
+        {
+            try
+            {
+                var settings = new SavedSettings
+                {
+                    backend = _backend,
+                    uitkOutFolder = _uitkOutFolder,
+                    uitkCreateDoc = _uitkCreateDoc,
+                    output = _output,
+                    scalePreset = _scalePreset,
+                    customRefHeight = _customRefHeight,
+                    newCanvas = _newCanvas,
+                    connectedScene = _connectedScene,
+                    disableRaycasts = _disableRaycasts,
+                    includeGroupsInAccessors = _includeGroupsInAccessors,
+                    componentsOnlyAccessors = _componentsOnlyAccessors,
+                    warmUpBatchSize = _warmUpBatchSize,
+                    editorColumns = _editorColumns,
+                    spriteFolder = _spriteFolder,
+                    prefabFolder = _prefabFolder,
+                    tex = _tex,
+                    atlas = _atlas,
+                    canvasId = ObjectId(_existingCanvas),
+                    libraryId = ObjectId(_canonicalLibrary),
+                    fonts = _fontMap.ToDictionary(pair => pair.Key, pair => ObjectId(pair.Value)),
+                    liveEnabled = FigForgeLiveImport.Enabled,
+                    livePort = FigForgeLiveImport.Port
+                };
+                EditorPrefs.SetString(SettingsKey, JsonConvert.SerializeObject(settings));
+                if (notify) ShowNotification(new GUIContent("当前设置已保存"));
+            }
+            catch (System.Exception ex) { Log("保存设置失败：" + ex.Message, MessageType.Error); }
+        }
+
+        void LoadSettings()
+        {
+            if (!EditorPrefs.HasKey(SettingsKey))
+            {
+                // Capture legacy preferences once so an unsaved reset cannot
+                // become the next startup configuration via shared EditorPrefs.
+                SaveSettings(false);
+                return;
+            }
+            try
+            {
+                var settings = JsonConvert.DeserializeObject<SavedSettings>(EditorPrefs.GetString(SettingsKey));
+                if (settings == null) throw new System.InvalidOperationException("设置内容为空");
+                ApplySettings(settings);
+            }
+            catch (System.Exception ex) { Log("读取设置失败：" + ex.Message, MessageType.Warning); }
+        }
+
+        void ApplySettings(SavedSettings settings)
+        {
+            _backend = settings.backend;
+            _uitkOutFolder = settings.uitkOutFolder ?? "Assets/FigForge/UI";
+            _uitkCreateDoc = settings.uitkCreateDoc;
+            _output = settings.output;
+            _scalePreset = settings.scalePreset;
+            _customRefHeight = settings.customRefHeight;
+            _newCanvas = settings.newCanvas;
+            _connectedScene = settings.connectedScene;
+            _disableRaycasts = settings.disableRaycasts;
+            _includeGroupsInAccessors = settings.includeGroupsInAccessors;
+            _componentsOnlyAccessors = settings.componentsOnlyAccessors;
+            _warmUpBatchSize = settings.warmUpBatchSize;
+            _editorColumns = settings.editorColumns;
+            _spriteFolder = settings.spriteFolder ?? "Assets/FigForge/Sprites";
+            _prefabFolder = settings.prefabFolder ?? "Assets/FigForge/Prefabs";
+            _tex = settings.tex ?? new TextureImportSettings();
+            _atlas = settings.atlas ?? new AtlasSettings();
+            _warmUpBatchSize = Mathf.Clamp(_warmUpBatchSize, 1, 8192);
+            _editorColumns = Mathf.Clamp(_editorColumns, 1, 50);
+            EditorPrefs.SetInt(PrefWarmUpBatchSize, _warmUpBatchSize);
+            SetEditorColumnsPref(_editorColumns);
+            _existingCanvas = ResolveObject<Canvas>(settings.canvasId);
+            _canonicalLibrary = ResolveObject<CanonicalLibrary>(settings.libraryId);
+            _fontMap.Clear();
+            if (settings.fonts != null)
+                foreach (var pair in settings.fonts)
+                {
+                    var font = ResolveObject<TMP_FontAsset>(pair.Value);
+                    if (font != null) _fontMap[pair.Key] = font;
+                }
+            if (_manifest != null) BuildFontKeys();
+            if (FigForgeLiveImport.Port != settings.livePort) FigForgeLiveImport.Port = settings.livePort;
+            if (FigForgeLiveImport.Enabled != settings.liveEnabled) FigForgeLiveImport.Enabled = settings.liveEnabled;
+        }
+
+        void SettingsBar()
+        {
+            using (new EditorGUILayout.HorizontalScope(_styles.card))
+            {
+                if (GUILayout.Button("Reset", _styles.button, GUILayout.Height(26)))
+                {
+                    ApplySettings(new SavedSettings());
+                    ShowNotification(new GUIContent("已恢复默认设置；点击 Apply 以供下次使用"));
+                }
+                if (GUILayout.Button("Apply", _styles.primaryButton, GUILayout.Height(26))) SaveSettings();
+            }
+        }
+
         void OnEnable()
         {
             wantsMouseMove = true;
             _warmUpBatchSize = WarmUpBatchSizePref;
             _editorColumns = EditorColumnsPref;
+            LoadSettings();
             RefreshManifests();
             RefreshFonts();
         }
@@ -260,6 +397,7 @@ namespace FigForge
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
 
             Header();
+            SettingsBar();
             LiveImportSection();
             ManifestPicker();
             if (_manifest != null)

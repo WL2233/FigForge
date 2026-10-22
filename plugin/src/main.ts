@@ -109,6 +109,23 @@ function clampDimension(value: unknown, min: number, max: number, fallback: numb
 // UI → main
 // ---------------------------------------------------------------------------
 figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
+  // Settings do not depend on page loading (which may fail independently).
+  if (msg.type === 'load-settings' || msg.type === 'save-settings') {
+    const operation = msg.type === 'load-settings' ? 'load' : 'save';
+    try {
+      if (operation === 'load') {
+        const prefs = await figma.clientStorage.getAsync('figforge.ui.prefs');
+        figma.ui.postMessage({ type: 'settings-loaded', prefs });
+      } else {
+        if (!msg.prefs || typeof msg.prefs !== 'object' || Array.isArray(msg.prefs)) throw new Error('Invalid settings');
+        await figma.clientStorage.setAsync('figforge.ui.prefs', msg.prefs);
+        figma.ui.postMessage({ type: 'settings-saved' });
+      }
+    } catch (error) {
+      figma.ui.postMessage({ type: 'settings-error', operation, error: String(error) });
+    }
+    return;
+  }
   // All cross-page traversal runs from here (directly or via handleMcp), so wait
   // for every page to be loaded before handling any message (see startup note).
   await pagesLoaded;
