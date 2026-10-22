@@ -284,7 +284,7 @@ namespace FigForge
             tmp.fontStyle = style;
             tmp.color = color;
             tmp.raycastTarget = false;
-            tmp.textWrappingMode = TextWrappingModes.Normal;
+            tmp.enableWordWrapping = true;
             tmp.overflowMode = TextOverflowModes.Ellipsis;
             return tmp;
         }

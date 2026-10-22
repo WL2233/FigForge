@@ -2339,7 +2339,7 @@ namespace FigForge
             var tmp = go.AddComponent<TextMeshProUGUI>();
             tmp.text = text ?? ""; tmp.alignment = align; tmp.color = new Color(0.1f, 0.1f, 0.12f);
             tmp.fontSize = 14f * ctx.scaleFactor; tmp.raycastTarget = false;
-            tmp.textWrappingMode = TextWrappingModes.NoWrap; // single line (no wrap to a 2nd row)
+            tmp.enableWordWrapping = false; // single line (no wrap to a 2nd row)
             tmp.overflowMode = TextOverflowModes.Overflow;   // show the FULL label — never clip to "Tog…"
             ApplyFont(tmp, null, ctx);
             MatchTextWeight(tmp);
@@ -2556,7 +2556,7 @@ namespace FigForge
             placeholder.color = new Color(0.55f, 0.56f, 0.62f, 1f);
             placeholder.fontSize = 14f * sf;
             placeholder.raycastTarget = false;
-            placeholder.textWrappingMode = TextWrappingModes.NoWrap;
+            placeholder.enableWordWrapping = false;
             placeholder.overflowMode = TextOverflowModes.Overflow;
             ApplyFont(placeholder, c.defLabelFont, ctx);
             MatchTextWeight(placeholder);
@@ -2569,7 +2569,7 @@ namespace FigForge
             text.color = new Color(0.1f, 0.1f, 0.12f, 1f);
             text.fontSize = 14f * sf;
             text.raycastTarget = false;
-            text.textWrappingMode = TextWrappingModes.NoWrap;
+            text.enableWordWrapping = false;
             text.overflowMode = TextOverflowModes.Overflow;
             ApplyFont(text, c.defLabelFont, ctx);
             MatchTextWeight(text);
@@ -2638,7 +2638,7 @@ namespace FigForge
             text.color = new Color(0.1f, 0.1f, 0.12f, 1f);
             text.fontSize = 14f * sf;
             text.raycastTarget = false;
-            text.textWrappingMode = TextWrappingModes.NoWrap;
+            text.enableWordWrapping = false;
             text.overflowMode = TextOverflowModes.Overflow;
             ApplyFont(text, c.defLabelFont, ctx);
             MatchTextWeight(text);
@@ -3349,7 +3349,7 @@ namespace FigForge
             title.fontStyle = FontStyles.Bold;
 
             var body = AddControlLabel(panelGo, "Body", c.body ?? "Dialog body", c.parts, "Body", ctx, TextAlignmentOptions.TopLeft);
-            body.textWrappingMode = TextWrappingModes.Normal;
+            body.enableWordWrapping = true;
             body.overflowMode = TextOverflowModes.Ellipsis;
             body.color = new Color(0.25f, 0.25f, 0.3f, 1f);
             if (!(c.parts != null && c.parts.ContainsKey("Body")))
@@ -3529,7 +3529,7 @@ namespace FigForge
 
             var body = AddControlLabel(go, "Body", c.body ?? "", c.parts, "Body", ctx, TextAlignmentOptions.TopLeft);
             body.color = new Color(0.82f, 0.84f, 0.88f, 1f);
-            body.textWrappingMode = TextWrappingModes.Normal;
+            body.enableWordWrapping = true;
             if (!(c.parts != null && c.parts.ContainsKey("Body")))
             {
                 var brt = body.GetComponent<RectTransform>();
@@ -4033,7 +4033,7 @@ namespace FigForge
         static void ConfigureButtonLabelText(TMP_Text tmp)
         {
             if (tmp == null) return;
-            tmp.textWrappingMode = TextWrappingModes.NoWrap;
+            tmp.enableWordWrapping = false;
             tmp.overflowMode = TextOverflowModes.Overflow;
             tmp.enableAutoSizing = false;
         }
