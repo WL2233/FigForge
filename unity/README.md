@@ -3,12 +3,16 @@
 Install this UPM package, then open **Window → FigForge → Importer**.
 
 1. Import a ZIP exported by the Figma plugin.
-2. Configure fonts, texture options, canonical library and prefab output folder.
+2. Configure fonts, texture options and prefab output folder.
 3. Generate a single frame prefab, or select a page bundle and generate all frame prefabs.
 
 Outputs are uGUI `.prefab` assets. Matching output filenames are overwritten on reimport. The importer builds in a temporary preview scene and closes it after saving; it does not assemble or update your open scene.
 
-Generated accessor scripts require Unity's normal script import before typed prefab references are populated. The post-reload hook updates queued prefab assets directly.
+The importer does not generate C# accessor scripts or a Canonical Library asset. Pages retain their base FigForgeFrame, container components, runtime element registry and navigation. Reusable control prefabs remain in Assets/FigForge/Canonical; their stored signatures drive reuse and updates.
+
+Sprites are copied to Assets/FigForge/Sprites/<screen>/AltasImgs or RawImgs, preserving the bundle category and export filename. Legacy bundles without categories use AltasImgs only when both PNG dimensions are below 512; other PNGs use RawImgs. Existing flat sprites are moved through AssetDatabase when possible to preserve their GUIDs.
+
+When upgrading an existing Unity project, previously generated scripts and library assets are not deleted automatically. Rebuild affected page prefabs with this importer and migrate application calls to the runtime APIs before removing old Generated files and the old library asset. Custom prefab mappings from the removed library are no longer supported.
 
 Place prefabs under your own Canvas and supply your application's navigation and EventSystem. Camera-based blend compositing requires an appropriately configured Canvas/camera.
 

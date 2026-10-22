@@ -42,14 +42,11 @@ namespace FigForge
         ScalePreset _scalePreset = ScalePreset.MatchFigma;
         float _customRefHeight = 1080f;
         bool _disableRaycasts = true;
-        bool _includeGroupsInAccessors = true;
-        bool _componentsOnlyAccessors = true;  // accessors for controls only; labels/images need a [s] name marker
         int _warmUpBatchSize = DefaultWarmUpBatchSize;
         int _editorColumns = DefaultEditorColumns;
         string _spriteFolder = "Assets/FigForge/Sprites";
         string _prefabFolder = "Assets/FigForge/Prefabs";
 
-        CanonicalLibrary _canonicalLibrary;
         TextureImportSettings _tex = new TextureImportSettings();
 
         // font mapping: "family|style" → TMP asset
@@ -87,14 +84,11 @@ namespace FigForge
             public ScalePreset scalePreset = ScalePreset.MatchFigma;
             public float customRefHeight = 1080f;
             public bool disableRaycasts = true;
-            public bool includeGroupsInAccessors = true;
-            public bool componentsOnlyAccessors = true;
             public int warmUpBatchSize = DefaultWarmUpBatchSize;
             public int editorColumns = DefaultEditorColumns;
             public string spriteFolder = "Assets/FigForge/Sprites";
             public string prefabFolder = "Assets/FigForge/Prefabs";
             public TextureImportSettings tex = new TextureImportSettings();
-            public string libraryId;
             public Dictionary<string, string> fonts = new Dictionary<string, string>();
         }
 
@@ -111,14 +105,11 @@ namespace FigForge
                     scalePreset = _scalePreset,
                     customRefHeight = _customRefHeight,
                     disableRaycasts = _disableRaycasts,
-                    includeGroupsInAccessors = _includeGroupsInAccessors,
-                    componentsOnlyAccessors = _componentsOnlyAccessors,
                     warmUpBatchSize = _warmUpBatchSize,
                     editorColumns = _editorColumns,
                     spriteFolder = _spriteFolder,
                     prefabFolder = _prefabFolder,
                     tex = _tex,
-                    libraryId = ObjectId(_canonicalLibrary),
                     fonts = _fontMap.ToDictionary(pair => pair.Key, pair => ObjectId(pair.Value)),
                 };
                 EditorPrefs.SetString(SettingsKey, JsonConvert.SerializeObject(settings));
@@ -150,8 +141,6 @@ namespace FigForge
             _scalePreset = settings.scalePreset;
             _customRefHeight = settings.customRefHeight;
             _disableRaycasts = settings.disableRaycasts;
-            _includeGroupsInAccessors = settings.includeGroupsInAccessors;
-            _componentsOnlyAccessors = settings.componentsOnlyAccessors;
             _warmUpBatchSize = settings.warmUpBatchSize;
             _editorColumns = settings.editorColumns;
             _spriteFolder = settings.spriteFolder ?? "Assets/FigForge/Sprites";
@@ -161,7 +150,6 @@ namespace FigForge
             _editorColumns = Mathf.Clamp(_editorColumns, 1, 50);
             EditorPrefs.SetInt(PrefWarmUpBatchSize, _warmUpBatchSize);
             SetEditorColumnsPref(_editorColumns);
-            _canonicalLibrary = ResolveObject<CanonicalLibrary>(settings.libraryId);
             _fontMap.Clear();
             if (settings.fonts != null)
                 foreach (var pair in settings.fonts)
@@ -510,8 +498,6 @@ namespace FigForge
                 _scalePreset = (ScalePreset)EditorGUILayout.EnumPopup("Scale", _scalePreset);
                 if (_scalePreset == ScalePreset.Custom) _customRefHeight = EditorGUILayout.FloatField("Reference height", _customRefHeight);
                 _disableRaycasts = EditorGUILayout.ToggleLeft("Disable decorative raycasts", _disableRaycasts);
-                _componentsOnlyAccessors = EditorGUILayout.ToggleLeft("Accessors for controls only", _componentsOnlyAccessors);
-                _includeGroupsInAccessors = EditorGUILayout.ToggleLeft("Generate group accessors", _includeGroupsInAccessors);
                 _warmUpBatchSize = Mathf.Clamp(EditorGUILayout.IntField("Warmup batch size", _warmUpBatchSize), 1, 8192);
             }
         }
@@ -547,17 +533,12 @@ namespace FigForge
                 if (!_showCanonical) return;
                 using (new EditorGUI.IndentLevelScope())
                 {
-                    _canonicalLibrary = (CanonicalLibrary)EditorGUILayout.ObjectField("Library", _canonicalLibrary, typeof(CanonicalLibrary), false);
                     if (refCount > 0)
                     {
                         EditorGUILayout.LabelField("Referenced by this design:", _styles.sectionTitle);
                         foreach (var r in _manifest.canonicalRefs)
-                        {
-                            bool resolved = _canonicalLibrary != null && _canonicalLibrary.Resolve("button", r) != null;
-                            EditorGUILayout.LabelField($"   {(resolved ? "ok" : "missing")}  {r}", _styles.subtleLabel);
-                        }
-                        if (_canonicalLibrary == null)
-                            EditorGUILayout.HelpBox("Assign a Canonical Library (Create > FigForge > Canonical Library) to instantiate real button prefabs; otherwise placeholders are used.", MessageType.Info);
+                            EditorGUILayout.LabelField($"   {r}", _styles.subtleLabel);
+                        EditorGUILayout.HelpBox("Reusable control prefabs are generated in Assets/FigForge/Canonical.", MessageType.Info);
                     }
                     else EditorGUILayout.LabelField("No canonical references (name layers Btn_<instance>_<ref>).", _styles.subtleLabel);
                 }
@@ -646,12 +627,11 @@ namespace FigForge
                 bool isOverlay = FrameRoles.IsOverlay(role);
                 if (isOverlay && page.GetComponent<FigForgeOverlayLayer>() == null)
                     page.AddComponent<FigForgeOverlayLayer>();
-                GenerateAndWireFrame(page, manifest, ctx, frame, section, isOverlay);
+                RegisterFrameElements(page, manifest, ctx, isOverlay);
                 TextureImportHelper.EnsureFolder(_prefabFolder);
                 var path = $"{_prefabFolder}/{SafeName(manifest.screen.name)}.prefab";
                 var saved = PrefabUtility.SaveAsPrefabAsset(page, path);
                 if (saved == null) throw new System.IO.IOException($"Could not save prefab: {path}");
-                FrameCodeGenWire.QueuePrefab(path);
                 Log($"saved prefab → {path}", MessageType.Info);
             }
             finally { UnityEditor.SceneManagement.EditorSceneManager.ClosePreviewScene(scene); }
@@ -667,7 +647,7 @@ namespace FigForge
             float sf = fh > 0 ? ReferenceHeight(fh) / fh : 1f;
             return new BuildContext
             {
-                scaleFactor = sf, sprites = sprites, canonical = _canonicalLibrary, disableRaycasts = _disableRaycasts,
+                scaleFactor = sf, sprites = sprites, disableRaycasts = _disableRaycasts,
                 warmUpBatchSize = _warmUpBatchSize,
                 exportScale = m.screen != null ? m.screen.exportScale : 1f,
                 vanilla = m.vanilla,
@@ -676,81 +656,35 @@ namespace FigForge
             };
         }
 
-        void GenerateAndWireFrame(GameObject page, Manifest m, BuildContext ctx, FigForgeFrame frame, string section, bool isOverlay = false)
+        // Keep runtime lookup keys and overlay discovery without generating scripts.
+        static void RegisterFrameElements(GameObject page, Manifest manifest, BuildContext ctx, bool isOverlay)
         {
-            if (page == null || m == null) return;
-            var model = FrameCodeGenDriver.BuildModel(m, section ?? "", _includeGroupsInAccessors, _componentsOnlyAccessors, isOverlay);
-            var targets = new Dictionary<string, GameObject>();
-            ResolveFrameMemberTargets(model, ctx, page.GetComponent<FigForgeScreen>(), targets);
-            FrameCodeGenDriver.WriteFiles(model);
-            // Overlays have no generated frame class to upgrade to (see WriteFiles) — leaving
-            // generatedType empty keeps FrameCodeGenWire from trying to swap in a missing type.
-            if (frame != null && !isOverlay) frame.generatedType = FrameCodeGen.GeneratedNamespace + "." + model.className;
-            var reg = page.GetComponent<FigForgeScreen>();
-            if (reg == null && model.members != null && model.members.Count > 0)
-                reg = page.AddComponent<FigForgeScreen>();
-            if (reg != null)
+            var registry = page.GetComponent<FigForgeScreen>() ?? page.AddComponent<FigForgeScreen>();
+            string rootId = manifest.elements.Find(e => e != null && string.IsNullOrEmpty(e.parentId))?.id;
+            var elements = new List<ElementData>();
+            var names = new List<string>();
+            foreach (var e in manifest.elements)
             {
-                foreach (var mem in model.members)
+                if (e == null || e.id == rootId) continue;
+                bool member = IdentifierUtil.HasSerializeMarker(e.displayName)
+                    || (e.canonical != null && !string.IsNullOrEmpty(e.canonical.kind))
+                    || e.type == "GROUP" || e.type == "FRAME";
+                if (!member) continue;
+                elements.Add(e);
+                names.Add(IdentifierUtil.ToIdentifier(IdentifierUtil.StripSerializeMarker(
+                    !string.IsNullOrEmpty(e.displayName) ? e.displayName : e.name)));
+            }
+            var keys = IdentifierUtil.Dedupe(names, null, IdentifierUtil.ReservedAccessorNames);
+            for (int i = 0; i < elements.Count; i++)
+            {
+                var e = elements[i];
+                if (string.IsNullOrEmpty(e.id) || !ctx.byElementId.TryGetValue(e.id, out var go) || go == null) continue;
+                registry.Register(keys[i].TrimStart('@'), go);
+                if (isOverlay)
                 {
-                    GameObject memGo = null;
-                    if (!targets.TryGetValue(mem.sourceName, out memGo) || memGo == null)
-                        memGo = reg.Get(mem.Key) ?? reg.Get(mem.sourceName);
-                    if (memGo != null)
-                    {
-                        if (mem.isGroup)
-                        {
-                            var frameElement = memGo.GetComponent<FigForgeFrameElement>() ?? memGo.AddComponent<FigForgeFrameElement>();
-                            frameElement.ConfigureType(mem.sourceType);
-                            // Record the generated group component so the post-compile hook swaps
-                            // this placeholder for it and wires the group's child refs.
-                            if (!string.IsNullOrEmpty(mem.groupTypeName))
-                                frameElement.generatedType = FrameCodeGen.GeneratedNamespace + "." + mem.groupTypeName;
-                            EditorUtility.SetDirty(frameElement);
-                        }
-                        reg.Register(mem.Key, memGo);
-                    }
+                    var modal = go.GetComponent<FigForgeModal>();
+                    if (modal != null) modal.dialogKey = e.name ?? "";
                 }
-                EditorUtility.SetDirty(reg);
-            }
-            // Overlay layer: tag each dialog with the same key its generated Dialogs.<Name>
-            // accessor resolves by, so FigForgeDialogHost can locate it globally.
-            if (isOverlay && model.members != null)
-            {
-                foreach (var mem in model.members)
-                {
-                    if (mem.csharpType != "FigForgeModal") continue;
-                    if (!targets.TryGetValue(mem.sourceName, out var memGo) || memGo == null)
-                        memGo = reg != null ? (reg.Get(mem.Key) ?? reg.Get(mem.sourceName)) : null;
-                    var modal = memGo != null ? memGo.GetComponent<FigForgeModal>() : null;
-                    if (modal != null) { modal.dialogKey = mem.registryKey; EditorUtility.SetDirty(modal); }
-                }
-            }
-            if (frame != null && frame.GetType() != typeof(FigForgeFrame))
-            {
-                frame.__WireFrame(reg);
-                EditorUtility.SetDirty(frame);
-            }
-            Log($"{(ctx != null ? "generated" : "refreshed")} accessors for frame '{model.className}' ({model.members.Count} member(s))", MessageType.Info);
-            // When the generated code is unchanged, no compile follows this import and the
-            // [DidReloadScripts] upgrade never fires — the rebuilt page would stay on the
-            // base FigForgeFrame (UIFrames.X resolves null). Upgrade now; if a compile IS
-            // pending, the reload hook covers it instead (idempotent).
-            FrameCodeGenWire.RequestUpgrade();
-        }
-
-        static void ResolveFrameMemberTargets(FrameModel model, BuildContext ctx, FigForgeScreen reg, Dictionary<string, GameObject> targets)
-        {
-            if (model.members == null) return;
-            foreach (var mem in model.members)
-            {
-                GameObject go = null;
-                if (ctx != null)
-                    ctx.byElementId.TryGetValue(mem.sourceName, out go);
-                if (go == null && reg != null)
-                    go = reg.Get(mem.Key) ?? reg.Get(mem.sourceName);
-                if (go != null && !string.IsNullOrEmpty(mem.sourceName))
-                    targets[mem.sourceName] = go;
             }
         }
 

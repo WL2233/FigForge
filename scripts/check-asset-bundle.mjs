@@ -1,6 +1,20 @@
 // Run directly with Node >=22.18; no build or compiler required.
 import assert from 'node:assert/strict';
-import { AssetBundle } from '../plugin/src/asset-bundle.ts';
+import { createHash } from 'node:crypto';
+import { AssetBundle, sha256 } from '../plugin/src/asset-bundle.ts';
+
+// Match Node's independent SHA-256 implementation at padding/block boundaries.
+for (const length of [0, 1, 55, 56, 63, 64, 65, 119, 120, 128, 1000000]) {
+  const bytes = Uint8Array.from({ length }, (_, i) => (i * 31 + 7) & 255);
+  assert.equal(sha256(bytes), createHash('sha256').update(bytes).digest('hex'));
+}
+const backing = new Uint8Array([0, 97, 98, 99, 0]);
+assert.equal(sha256(backing.subarray(1, 4)), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+
+// Reproduce the Figma iframe environment: crypto exists but subtle is absent.
+const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+Object.defineProperty(globalThis, 'crypto', { configurable: true, value: {} });
+try {
 
 function png(width, height, marker = 0) {
   const bytes = new Uint8Array(25);
@@ -54,3 +68,11 @@ assert.deepEqual(collisionStore.files.get('Imgs/AltasImgs/Icon.png'), small);
 assert.deepEqual(collisionStore.files.get('Imgs/AltasImgs/Icon_2.png'), png(511, 511, 1));
 await assert.rejects(store.manifest(json, [{ name: 'bad.png', data: new Uint8Array(4) }]), /Invalid PNG/);
 console.log('PASS: content deduplication, cross-screen paths, nested references, dimension boundaries, distinct content and invalid headers');
+// Also support environments without a crypto global at all.
+Object.defineProperty(globalThis, 'crypto', { configurable: true, value: undefined });
+assert.equal(await new AssetBundle().manifest(json, assets), JSON.stringify(frame, null, 2));
+console.log('PASS: SHA-256 reference vectors and packaging without crypto.subtle or crypto');
+} finally {
+  if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
+  else delete globalThis.crypto;
+}

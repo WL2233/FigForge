@@ -27,12 +27,6 @@ namespace FigForge
         [ReadOnly]
         public string shellKey;
 
-        [Tooltip("Full name of the importer-generated FigForgeFrame subclass for this page " +
-                 "(e.g. FigForge.Generated.LaunchPage). The editor swaps this plain base for that " +
-                 "subclass + wires its typed refs once it compiles. Empty = no generated frame.")]
-        [ReadOnly]
-        public string generatedType;
-
         bool _bound;
 
         public bool isVisible => gameObject.activeSelf;

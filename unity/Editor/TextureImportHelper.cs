@@ -40,7 +40,7 @@ namespace FigForge
             // and canonical button state sprites — so they scale without smearing
             // their corners. Icons / plain fills aren't candidates, so they stay Simple.
             // Keys retain manifest-relative paths; source resolution stays inside
-            // the bundle. Destination filenames remain flat (export names in new exports).
+            // the bundle. Keep exported image categories and filenames in the destination.
             var borders = new Dictionary<string, NineSlice>();
             var candidates = new HashSet<string>();
             foreach (var e in manifest.elements)
@@ -64,16 +64,33 @@ namespace FigForge
                 if (ns != null) borders[file] = ns;
             }
 
+            var destinations = new Dictionary<string, string>();
+            foreach (var asset in manifest.assets)
+            {
+                var src = ResolveSource(sourceDir, asset.file);
+                if (!File.Exists(src)) { Debug.LogWarning($"[FigForge] missing PNG: {asset.file}"); continue; }
+                var category = ImageCategory(asset.file, src);
+                var folder = $"{targetFolder}/{category}";
+                EnsureFolder(folder);
+                var file = Path.GetFileName(asset.file.Replace('\\', '/'));
+                var dst = $"{folder}/{file}";
+                // Preserve existing sprite GUIDs when upgrading the old flat layout.
+                var legacy = $"{targetFolder}/{file}";
+                if (!File.Exists(dst) && File.Exists(legacy))
+                {
+                    var error = AssetDatabase.MoveAsset(legacy, dst);
+                    if (!string.IsNullOrEmpty(error)) throw new IOException(error);
+                }
+                destinations[asset.file] = dst;
+            }
+
             AssetDatabase.StartAssetEditing();
             try
             {
                 foreach (var asset in manifest.assets)
                 {
-                    var file = Path.GetFileName(asset.file); // bare name — zip-slip defense
-                    var src = ResolveSource(sourceDir, asset.file);
-                    if (!File.Exists(src)) { Debug.LogWarning($"[FigForge] missing PNG: {file}"); continue; }
-                    var dst = $"{targetFolder}/{file}";
-                    File.Copy(src, dst, true);
+                    if (!destinations.TryGetValue(asset.file, out var dst)) continue;
+                    File.Copy(ResolveSource(sourceDir, asset.file), dst, true);
                 }
             }
             finally { AssetDatabase.StopAssetEditing(); }
@@ -90,8 +107,7 @@ namespace FigForge
             {
                 foreach (var asset in manifest.assets)
                 {
-                    var file = Path.GetFileName(asset.file); // bare name — zip-slip defense
-                    var dst = $"{targetFolder}/{file}";
+                    if (!destinations.TryGetValue(asset.file, out var dst)) continue;
                     var importer = AssetImporter.GetAtPath(dst) as TextureImporter;
                     if (importer == null) continue;
 
@@ -113,12 +129,36 @@ namespace FigForge
 
             foreach (var asset in manifest.assets)
             {
-                var file = Path.GetFileName(asset.file); // bare name — zip-slip defense
-                var sprite = AssetDatabase.LoadAssetAtPath<Sprite>($"{targetFolder}/{file}");
+                if (!destinations.TryGetValue(asset.file, out var dst)) continue;
+                var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(dst);
                 if (sprite != null) result[asset.file] = sprite;
             }
 
             return result;
+        }
+
+        // New bundles already declare the category. Legacy bundles use the same
+        // rule as the exporter: BOTH dimensions must be below 512 for AltasImgs.
+        internal static string ImageCategory(string file, string sourcePath)
+        {
+            var parts = file.Replace('\\', '/').Split('/');
+            for (int i = parts.Length - 2; i >= 0; i--)
+                if (parts[i] == "AltasImgs" || parts[i] == "RawImgs") return parts[i];
+            using (var stream = File.OpenRead(sourcePath))
+            using (var reader = new BinaryReader(stream))
+            {
+                var header = reader.ReadBytes(24);
+                byte[] signature = { 137, 80, 78, 71, 13, 10, 26, 10 };
+                if (header.Length != 24) throw new IOException($"Invalid PNG: {file}");
+                for (int i = 0; i < signature.Length; i++)
+                    if (header[i] != signature[i]) throw new IOException($"Invalid PNG: {file}");
+                if (header[12] != 'I' || header[13] != 'H' || header[14] != 'D' || header[15] != 'R')
+                    throw new IOException($"Invalid PNG header: {file}");
+                uint width = ((uint)header[16] << 24) | ((uint)header[17] << 16) | ((uint)header[18] << 8) | header[19];
+                uint height = ((uint)header[20] << 24) | ((uint)header[21] << 16) | ((uint)header[22] << 8) | header[23];
+                if (width == 0 || height == 0) throw new IOException($"Empty PNG: {file}");
+                return width < 512 && height < 512 ? "AltasImgs" : "RawImgs";
+            }
         }
 
         static void AddState(HashSet<string> set, string file)

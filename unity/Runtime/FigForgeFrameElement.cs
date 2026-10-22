@@ -28,12 +28,6 @@ namespace FigForge
         [SerializeField, ReadOnly, Tooltip("Original Figma container type as a stable string key for future-proof serialization.")]
         string figmaTypeKey = "";
 
-        [Tooltip("Full name of the importer-generated FigForgeFrameElement subclass for this group " +
-                 "(e.g. FigForge.Generated.LaunchPage_HeaderGroup). The editor swaps this plain base " +
-                 "for that subclass + wires its typed child refs once it compiles. Empty = no generated group.")]
-        [HideInInspector]
-        public string generatedType;
-
         public FigForgeContainerType FigmaType => figmaType;
         public string FigmaTypeKey => figmaTypeKey;
         public RectTransform RectTransform => transform as RectTransform;

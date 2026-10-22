@@ -4,7 +4,7 @@
 // Supports: constraint-driven anchors (offsetMin/offsetMax straight from the
 // manifest), sprite images, solid/gradient fills, rounded fill-only panels,
 // real stroke borders, rotation, text (TMP), clipping, auto-layout, and
-// canonical UI elements (a `Btn_*` element becomes an instance of a library
+// canonical UI elements (a `Btn_*` element becomes an instance of a reusable
 // prefab instead of being rebuilt).
 // =============================================================================
 
@@ -28,7 +28,8 @@ namespace FigForge
         public float exportScale = 1f;
         public Dictionary<string, Sprite> sprites = new Dictionary<string, Sprite>();
         public Func<string, string, TMP_FontAsset> resolveFont;
-        public CanonicalLibrary canonical;
+        internal Dictionary<string, GameObject> canonicalBySignature;
+        internal readonly Dictionary<string, GameObject> canonicalByReference = new Dictionary<string, GameObject>();
         // Vanilla import (manifest.vanilla): render everything from baked sprites —
         // no SDF/vector/layered shaders, no page compositor. The plugin bakes a PNG
         // onto every shape, so this only governs the assetless fallback (plain Image
@@ -39,7 +40,7 @@ namespace FigForge
         public Action<string> log = _ => { };
         // name → GameObject collected during a build, applied to the page's FigForgeScreen.
         public readonly List<KeyValuePair<string, GameObject>> registered = new List<KeyValuePair<string, GameObject>>();
-        // element id → built GameObject, so the codegen can register members for typed wiring.
+        // element id → built GameObject, for runtime element registration.
         public readonly Dictionary<string, GameObject> byElementId = new Dictionary<string, GameObject>();
         // "kind|ref" keys whose canonical prefab was already resolved during THIS page
         // build. A manifest carries ONE definition per ref, so only the first element
@@ -68,6 +69,8 @@ namespace FigForge
 
             ctx.registered.Clear();
             ctx.resolvedCanonicalRefs.Clear();
+            ctx.canonicalByReference.Clear();
+            ctx.canonicalBySignature = null;
             ctx.radioGroups.Clear();
             ctx.radioGroupFirst.Clear();
 
@@ -314,7 +317,7 @@ namespace FigForge
             }
 
             // ---- Canonical element: instantiate a prefab (generated once from the
-            // Figma component, or a hand-made one from the CanonicalLibrary) ------
+            // Figma component) ------
             if (e.canonical != null)
             {
                 string canonicalKind = string.IsNullOrEmpty(e.canonical.kind) ? "button" : e.canonical.kind;
@@ -4065,16 +4068,8 @@ namespace FigForge
 
         // ---- Canonical prefab: one Figma component → one reusable Unity prefab --
         const string CanonicalFolder = "Assets/FigForge/Canonical";
-        const string CanonicalLibraryPath = "Assets/FigForge/FigForgeCanonicalLibrary.asset";
 
-        /// <summary>
-        /// Resolve a canonical (kind, ref) to a reusable prefab — the heart of the
-        /// "define once, reference everywhere" model. A hand-made library prefab
-        /// wins; otherwise an existing generated prefab is reused; otherwise one is
-        /// generated from the Figma component (state sprites → SpriteSwap, else a
-        /// placeholder), saved, and registered in the auto-managed library. Reuse
-        /// is deliberate so manual skinning survives re-imports.
-        /// </summary>
+        // Reuse control prefabs directly; their FigForgeBindings stores the definition signature.
         static GameObject ResolveOrGenerateCanonicalPrefab(ElementData e, BuildContext ctx)
         {
             string kind = string.IsNullOrEmpty(e.canonical.kind) ? "button" : e.canonical.kind;
@@ -4084,40 +4079,19 @@ namespace FigForge
             bool signatureShare = CanShareCanonicalBySignature(e, kind);
             // Only the FIRST element of a (kind, ref) in a build may regenerate the
             // shared prefab — see BuildContext.resolvedCanonicalRefs.
-            bool firstThisBuild = ctx.resolvedCanonicalRefs.Add(kind + "|" + refName);
+            string referenceKey = kind + "|" + refName;
+            bool firstThisBuild = ctx.resolvedCanonicalRefs.Add(referenceKey);
+            if (!firstThisBuild && ctx.canonicalByReference.TryGetValue(referenceKey, out var resolved) && resolved != null)
+                return resolved;
 
-            // Candidate prefab: a library-mapped one (hand-made or previously
-            // generated) wins lookup; else an existing generated prefab on disk.
             string path = $"{CanonicalFolder}/{CanonicalPrefabFile(refName)}.prefab";
-            var lib = ctx.canonical ?? LoadOrCreateCanonicalLibrary();
-            ctx.canonical = lib;
-            var refEntry = lib.ResolveEntry(kind, refName);
-            GameObject candidate = refEntry != null ? refEntry.prefab : null;
-            if (candidate == null) candidate = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(path);
-
+            var candidate = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(path);
             if (candidate != null)
             {
-                // Regenerate ONLY a FigForge-managed prefab (one living in the auto-
-                // managed Canonical folder) whose Figma definition changed — so design
-                // edits (stroke weight, fill, colours, font…) actually apply. A hand-made
-                // prefab mapped from elsewhere is ALWAYS reused (manual skin survives).
-                // A managed prefab with no/old signature (made before signatures existed)
-                // regenerates once, then tracks changes.
-                string candidatePath = UnityEditor.AssetDatabase.GetAssetPath(candidate);
-                bool managed = candidatePath != null && candidatePath.StartsWith(CanonicalFolder + "/", StringComparison.Ordinal);
                 var stamp = candidate.GetComponent<FigForgeBindings>();
-                string prevSig = !string.IsNullOrEmpty(refEntry != null ? refEntry.signature : null)
-                    ? refEntry.signature
-                    : (stamp != null ? stamp.signature : null);
-                bool stale = managed && prevSig != sig && firstThisBuild;
-                if (!stale)
+                if (!firstThisBuild || (stamp != null && stamp.signature == sig))
                 {
-                    // Never let a same-ref element overwrite the stored definition
-                    // signature with its own non-matching one (per-instance noise) —
-                    // the next import's first element would mismatch and regenerate
-                    // every time, replacing the asset under its live instances.
-                    string keep = !string.IsNullOrEmpty(prevSig) && prevSig != sig ? prevSig : sig;
-                    RegisterInLibrary(ctx, kind, refName, candidate, signatureShare && managed ? keep : null);
+                    ctx.canonicalByReference[referenceKey] = candidate;
                     return candidate;
                 }
                 ctx.log($"canonical {kind} '{refName}' definition changed — regenerating prefab.");
@@ -4125,12 +4099,27 @@ namespace FigForge
 
             if (signatureShare)
             {
-                var sigEntry = lib.ResolveSignature(kind, sig);
-                if (sigEntry != null && sigEntry.prefab != null)
+                if (ctx.canonicalBySignature == null)
                 {
-                    ctx.log($"canonical {kind} '{refName}' shares prefab with '{sigEntry.referenceName}' (signature match).");
-                    RegisterInLibrary(ctx, kind, refName, sigEntry.prefab, sig);
-                    return sigEntry.prefab;
+                    ctx.canonicalBySignature = new Dictionary<string, GameObject>();
+                    if (UnityEditor.AssetDatabase.IsValidFolder(CanonicalFolder))
+                        foreach (var guid in UnityEditor.AssetDatabase.FindAssets("t:Prefab", new[] { CanonicalFolder }))
+                        {
+                            var existing = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(
+                                UnityEditor.AssetDatabase.GUIDToAssetPath(guid));
+                            var stamp = existing != null ? existing.GetComponent<FigForgeBindings>() : null;
+                            if (stamp != null && !string.IsNullOrEmpty(stamp.signature))
+                                ctx.canonicalBySignature[stamp.signature] = existing;
+                        }
+                }
+                if (ctx.canonicalBySignature.TryGetValue(sig, out var shared) && shared != null)
+                {
+                    var stamp = shared.GetComponent<FigForgeBindings>();
+                    if (stamp != null && stamp.signature == sig)
+                    {
+                        ctx.canonicalByReference[referenceKey] = shared;
+                        return shared;
+                    }
                 }
             }
 
@@ -4177,7 +4166,8 @@ namespace FigForge
             if (prefab != null)
             {
                 ctx.log($"generated canonical {kind} '{refName}' → {path}");
-                RegisterInLibrary(ctx, kind, refName, prefab, signatureShare ? sig : null);
+                ctx.canonicalByReference[referenceKey] = prefab;
+                if (signatureShare) ctx.canonicalBySignature[sig] = prefab;
             }
             return prefab;
         }
@@ -4608,37 +4598,6 @@ namespace FigForge
             if (f.kind == "solid") return "solid:" + SigF(f.color);
             if (f.kind == "gradient") return "grad:" + SigGradient(f);
             return (f.kind ?? "") + ":" + (f.asset ?? "") + ":" + (f.scaleMode ?? "");
-        }
-
-        static void RegisterInLibrary(BuildContext ctx, string kind, string refName, GameObject prefab, string signature = null)
-        {
-            var lib = ctx.canonical ?? LoadOrCreateCanonicalLibrary();
-            ctx.canonical = lib; // reuse for the rest of this build
-            if (!CanonicalLibrary.TryParseKind(kind, out var k)) return;
-            var entry = lib.entries.Find(en => en != null && en.kind == k && en.referenceName == refName);
-            if (entry == null) { entry = new CanonicalLibrary.Entry { kind = k, referenceName = refName }; lib.entries.Add(entry); }
-            else if (entry.signature == signature && entry.prefab == prefab) return; // pure reuse — nothing to dirty
-            entry.signature = signature;
-            entry.prefab = prefab; // keep current (updates on regen; same ref on plain reuse)
-            // Dirty only — NO per-instance SaveAssets (a page with N controls would
-            // trigger N full project saves). The import pass ends with one
-            // AssetDatabase.SaveAssets() in FigForgeImporterWindow's finally blocks.
-            UnityEditor.EditorUtility.SetDirty(lib);
-        }
-
-        static CanonicalLibrary LoadOrCreateCanonicalLibrary()
-        {
-            var lib = UnityEditor.AssetDatabase.LoadAssetAtPath<CanonicalLibrary>(CanonicalLibraryPath);
-            if (lib != null) return lib;
-            var guids = UnityEditor.AssetDatabase.FindAssets("t:CanonicalLibrary");
-            if (guids.Length > 0)
-                return UnityEditor.AssetDatabase.LoadAssetAtPath<CanonicalLibrary>(
-                    UnityEditor.AssetDatabase.GUIDToAssetPath(guids[0]));
-            TextureImportHelper.EnsureFolder("Assets/FigForge");
-            lib = ScriptableObject.CreateInstance<CanonicalLibrary>();
-            UnityEditor.AssetDatabase.CreateAsset(lib, CanonicalLibraryPath);
-            UnityEditor.AssetDatabase.SaveAssets();
-            return lib;
         }
 
         static string SafeAsset(string s)
