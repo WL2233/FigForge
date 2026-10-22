@@ -21,7 +21,7 @@ const frame = JSON.parse(await store.manifest(json, assets));
 assert.equal(store.files.size, 1);
 assert.equal(frame.assets.length, 1);
 const path = frame.assets[0].file;
-assert.match(path, /^Imgs\/AltasImgs\/[a-f0-9]{64}\.png$/);
+assert.equal(path, 'Imgs/AltasImgs/a.png');
 assert.equal(frame.elements[0].asset, path);
 assert.equal(frame.elements[0].name, 'a.png');
 assert.equal(frame.elements[0].canonical.iconAsset, path);
@@ -36,5 +36,21 @@ for (const [w, h] of [[512, 1], [1, 512], [513, 511]]) {
 }
 await store.manifest('{"assets":[{"file":"different.png"}]}', [{ name: 'different.png', data: png(511, 511, 1) }]);
 assert.equal(store.files.size, 5);
+// Same names with different content must not overwrite, even across screens/folders.
+const collisionStore = new AssetBundle();
+async function addNamed(name, data) {
+  const result = JSON.parse(await collisionStore.manifest(
+    JSON.stringify({ assets: [{ file: name }], elements: [{ asset: name }] }),
+    [{ name, data }], '../'));
+  assert.equal(result.elements[0].asset, result.assets[0].file);
+  return result.assets[0].file;
+}
+assert.equal(await addNamed('Icon.png', small), '../Imgs/AltasImgs/Icon.png');
+assert.equal(await addNamed('Icon.png', png(511, 511, 1)), '../Imgs/AltasImgs/Icon_2.png');
+assert.equal(await addNamed('icon.png', png(512, 1)), '../Imgs/RawImgs/icon_3.png');
+assert.equal(await addNamed('other.png', small.slice()), '../Imgs/AltasImgs/Icon.png');
+assert.equal(collisionStore.files.size, 3);
+assert.deepEqual(collisionStore.files.get('Imgs/AltasImgs/Icon.png'), small);
+assert.deepEqual(collisionStore.files.get('Imgs/AltasImgs/Icon_2.png'), png(511, 511, 1));
 await assert.rejects(store.manifest(json, [{ name: 'bad.png', data: new Uint8Array(4) }]), /Invalid PNG/);
 console.log('PASS: content deduplication, cross-screen paths, nested references, dimension boundaries, distinct content and invalid headers');

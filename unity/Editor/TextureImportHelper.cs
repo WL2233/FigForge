@@ -40,7 +40,7 @@ namespace FigForge
             // and canonical button state sprites — so they scale without smearing
             // their corners. Icons / plain fills aren't candidates, so they stay Simple.
             // Keys retain manifest-relative paths; source resolution stays inside
-            // the bundle. Destination filenames remain flat (content hashes in new exports).
+            // the bundle. Destination filenames remain flat (export names in new exports).
             var borders = new Dictionary<string, NineSlice>();
             var candidates = new HashSet<string>();
             foreach (var e in manifest.elements)

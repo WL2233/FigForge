@@ -1,8 +1,11 @@
 import type { BinaryAsset } from './types';
 
-/** One content-addressed image store for the entire ZIP, including all screens. */
+/** Shared image store: hashes deduplicate content, filenames retain export names. */
 export class AssetBundle {
   readonly files = new Map<string, Uint8Array>();
+  private readonly hashToPath = new Map<string, string>();
+  // Unity imports into a flat folder; reserve names across both image folders.
+  private readonly usedNames = new Set<string>();
 
   async manifest(json: string, assets: BinaryAsset[], prefix = ''): Promise<string> {
     const paths = new Map<string, string>();
@@ -19,8 +22,18 @@ export class AssetBundle {
       const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)))
         .map(b => b.toString(16).padStart(2, '0')).join('');
       const folder = width < 512 && height < 512 ? 'AltasImgs' : 'RawImgs';
-      const path = `Imgs/${folder}/${hash}.png`;
-      if (!this.files.has(path)) this.files.set(path, bytes);
+      let path = this.hashToPath.get(hash);
+      if (!path) {
+        const name = asset.name.replace(/\\/g, '/').split('/').pop()!;
+        const stem = name.replace(/\.png$/i, '') || 'image';
+        let file = `${stem}.png`;
+        let suffix = 2;
+        while (this.usedNames.has(file.toLowerCase())) file = `${stem}_${suffix++}.png`;
+        this.usedNames.add(file.toLowerCase());
+        path = `Imgs/${folder}/${file}`;
+        this.hashToPath.set(hash, path);
+        this.files.set(path, bytes);
+      }
       paths.set(asset.name, prefix + path);
     }
     const manifest = JSON.parse(json);
