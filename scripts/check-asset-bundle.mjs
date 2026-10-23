@@ -1,7 +1,7 @@
 // Run directly with Node >=22.18; no build or compiler required.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { AssetBundle, sha256 } from '../plugin/src/asset-bundle.ts';
+import { AssetBundle, sha256, createSharedBundle, validateBundleName } from '../plugin/src/asset-bundle.ts';
 
 // Match Node's independent SHA-256 implementation at padding/block boundaries.
 for (const length of [0, 1, 55, 56, 63, 64, 65, 119, 120, 128, 1000000]) {
@@ -35,7 +35,7 @@ const frame = JSON.parse(await store.manifest(json, assets));
 assert.equal(store.files.size, 1);
 assert.equal(frame.assets.length, 1);
 const path = frame.assets[0].file;
-assert.equal(path, 'Imgs/AltasImgs/a.png');
+assert.equal(path, `AltasImgs/${sha256(small)}.png`);
 assert.equal(frame.elements[0].asset, path);
 assert.equal(frame.elements[0].name, 'a.png');
 assert.equal(frame.elements[0].canonical.iconAsset, path);
@@ -46,7 +46,7 @@ assert.equal(page.assets[0].file, '../' + path);
 assert.equal(store.files.size, 1);
 for (const [w, h] of [[512, 1], [1, 512], [513, 511]]) {
   const result = JSON.parse(await store.manifest('{"assets":[{"file":"large.png"}]}', [{ name: 'large.png', data: png(w, h) }]));
-  assert.match(result.assets[0].file, /^Imgs\/RawImgs\//);
+  assert.match(result.assets[0].file, /^RawImgs\//);
 }
 await store.manifest('{"assets":[{"file":"different.png"}]}', [{ name: 'different.png', data: png(511, 511, 1) }]);
 assert.equal(store.files.size, 5);
@@ -59,19 +59,56 @@ async function addNamed(name, data) {
   assert.equal(result.elements[0].asset, result.assets[0].file);
   return result.assets[0].file;
 }
-assert.equal(await addNamed('Icon.png', small), '../Imgs/AltasImgs/Icon.png');
-assert.equal(await addNamed('Icon.png', png(511, 511, 1)), '../Imgs/AltasImgs/Icon_2.png');
-assert.equal(await addNamed('icon.png', png(512, 1)), '../Imgs/RawImgs/icon_3.png');
-assert.equal(await addNamed('other.png', small.slice()), '../Imgs/AltasImgs/Icon.png');
+const smallPath = `AltasImgs/${sha256(small)}.png`;
+const changedPath = `AltasImgs/${sha256(png(511, 511, 1))}.png`;
+assert.equal(await addNamed('Icon.png', small), '../' + smallPath);
+assert.equal(await addNamed('Icon.png', png(511, 511, 1)), '../' + changedPath);
+assert.equal(await addNamed('icon.png', png(512, 1)), `../RawImgs/${sha256(png(512, 1))}.png`);
+assert.equal(await addNamed('other.png', small.slice()), '../' + smallPath);
 assert.equal(collisionStore.files.size, 3);
-assert.deepEqual(collisionStore.files.get('Imgs/AltasImgs/Icon.png'), small);
-assert.deepEqual(collisionStore.files.get('Imgs/AltasImgs/Icon_2.png'), png(511, 511, 1));
+assert.deepEqual(collisionStore.files.get(smallPath), small);
+assert.deepEqual(collisionStore.files.get(changedPath), png(511, 511, 1));
 await assert.rejects(store.manifest(json, [{ name: 'bad.png', data: new Uint8Array(4) }]), /Invalid PNG/);
 console.log('PASS: content deduplication, cross-screen paths, nested references, dimension boundaries, distinct content and invalid headers');
 // Also support environments without a crypto global at all.
 Object.defineProperty(globalThis, 'crypto', { configurable: true, value: undefined });
 assert.equal(await new AssetBundle().manifest(json, assets), JSON.stringify(frame, null, 2));
 console.log('PASS: SHA-256 reference vectors and packaging without crypto.subtle or crypto');
+
+function screen(name, data = small, assetName = 'icon.png') {
+  return { manifest: JSON.stringify({ screen: { name }, assets: [{ file: assetName }],
+    elements: [{ asset: assetName }] }), assets: [{ name: assetName, data }] };
+}
+const bundle = await createSharedBundle('公共UI', [screen('背包'), screen('商店', small, 'coin.png')]);
+assert.deepEqual(bundle.directories, ['公共UI/AltasImgs', '公共UI/RawImgs']);
+assert.equal(bundle.imageCount, 1);
+assert.deepEqual([...bundle.files.keys()], [
+  '公共UI/背包/manifest.json', '公共UI/商店/manifest.json', `公共UI/${smallPath}`,
+]);
+for (const name of ['背包', '商店']) {
+  const manifest = JSON.parse(bundle.files.get(`公共UI/${name}/manifest.json`));
+  assert.equal(manifest.assets[0].file, '../' + smallPath);
+  assert.equal(manifest.elements[0].asset, '../' + smallPath);
+}
+// Independent export sessions and reversed ordering preserve image paths.
+const separate = await createSharedBundle('公共UI', [screen('商店', small, 'renamed.png')]);
+assert.deepEqual(separate.files.get(`公共UI/${smallPath}`), small);
+const distinct = await createSharedBundle('公共UI', [screen('商店', png(511, 511, 1)), screen('背包')]);
+assert.equal(distinct.imageCount, 2);
+assert.ok(distinct.files.has(`公共UI/${smallPath}`));
+assert.ok(distinct.files.has(`公共UI/${changedPath}`));
+for (const name of ['', '..', '../bad', 'a/b', 'a\\b', 'CON', 'nul.txt', 'a.', ' a', 'a '])
+  assert.throws(() => validateBundleName(name));
+await assert.rejects(createSharedBundle('UI', []));
+await assert.rejects(createSharedBundle('UI', [screen('Home'), screen('home')]), /重复/);
+await assert.rejects(createSharedBundle('UI', [screen('a/b'), screen('a:b')]), /重复/);
+await assert.rejects(createSharedBundle('UI', [screen('RawImgs')]), /冲突/);
+const sanitized = await createSharedBundle('UI', [screen('背包/主界面')]);
+assert.ok(sanitized.files.has('UI/背包_主界面/manifest.json'));
+const empty = await createSharedBundle('UI', [{ manifest: '{"screen":{"name":"Empty"},"assets":[]}', assets: [] }]);
+assert.equal(empty.files.size, 1);
+assert.equal(empty.directories.length, 2);
+console.log('PASS: multi-frame shared layout, independent exports, stable filenames, empty assets and path conflicts');
 } finally {
   if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
   else delete globalThis.crypto;

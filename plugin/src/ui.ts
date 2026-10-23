@@ -1,12 +1,10 @@
-import { fileSafeName } from './naming';
 // =============================================================================
 // FigForge — UI thread (iframe)
 // =============================================================================
 
 import { DEFAULT_EXPORT_OPTIONS } from './types';
-import { AssetBundle } from './asset-bundle';
+import { createSharedBundle, validateBundleName, type BundleFrame } from './asset-bundle';
 import {
-  type BinaryAsset,
   type ElementConfig,
   type ExportOptions,
   type ExportScale,
@@ -29,7 +27,12 @@ const excluded = new Set<string>();
 const merged = new Set<string>();
 const forcedPng = new Set<string>();
 const passthrough = new Set<string>();
-let currentTree: TreeNode | null = null;
+let currentTrees: TreeNode[] = [];
+let exportBusy = false;
+function updateExportButton() {
+  ($('#exportBtn') as HTMLButtonElement).disabled = exportBusy || !currentTrees.length;
+  $('#exportBtn').textContent = exportBusy ? '导出中…' : `导出 ZIP（${currentTrees.length} 个）`;
+}
 let selectedId: string | null = null;
 let expandedNodes = new Set<string>();
 
@@ -153,8 +156,8 @@ function renderTree() {
   host.innerHTML = '';
   updateTreeStats();
   updateTreeFilterUi();
-  if (!currentTree) {
-    host.innerHTML = '<div class="empty">Select a frame in Figma.</div>';
+  if (!currentTrees.length) {
+    host.innerHTML = '<div class="empty">请选择一个或多个同级 Frame、组件或 Group。</div>';
     return;
   }
   const query = ($('#search') as HTMLInputElement).value.trim().toLowerCase();
@@ -231,13 +234,11 @@ function renderTree() {
     return frag;
   };
 
-  const tree = walk(currentTree);
-  if (tree) host.appendChild(tree);
-  else host.innerHTML = '<div class="empty">No matching layers.</div>';
-}
-
-function primeExpandedNodes(root: TreeNode) {
-  expandedNodes = new Set([root.id]);
+  for (const root of currentTrees) {
+    const tree = walk(root);
+    if (tree) host.appendChild(tree);
+  }
+  if (!host.childElementCount) host.innerHTML = '<div class="empty">No matching layers.</div>';
 }
 
 function miniBtn(label: string, cls: string, title: string, onClick: () => void): HTMLButtonElement {
@@ -264,7 +265,7 @@ function matchesTreeFilter(node: TreeNode): boolean {
 function updateTreeStats() {
   const el = document.getElementById('treeStats');
   if (!el) return;
-  if (!currentTree) {
+  if (!currentTrees.length) {
     el.textContent = '';
     return;
   }
@@ -278,7 +279,7 @@ function updateTreeStats() {
     if (passthrough.has(node.id) || node.passthroughByName) stats.pass += 1;
     (node.children || []).forEach(walk);
   };
-  walk(currentTree);
+  currentTrees.forEach(walk);
   const passPart = stats.pass ? ` · pass-through ${stats.pass}` : '';
   el.textContent = `total ${stats.total} · exported ${stats.exported} · excluded ${stats.excluded} · merged ${stats.merged} · raster ${stats.raster}${passPart}`;
 }
@@ -376,9 +377,15 @@ function currentOptions(): ExportOptions {
 }
 
 $('#exportBtn').addEventListener('click', () => {
+  if (exportBusy) return;
+  let bundleName: string;
+  try { bundleName = validateBundleName($<HTMLInputElement>('#bundleName').value); }
+  catch (e) { setStatus((e as Error).message, true); return; }
+  exportBusy = true;
+  updateExportButton();
   setStatus('Exporting…');
   showProgress(true);
-  post({ type: 'export', scale: parseScale(), options: currentOptions(), elementConfigs: collectConfigs() });
+  post({ type: 'export', bundleName, scale: parseScale(), options: currentOptions(), elementConfigs: collectConfigs() });
 });
 
 // JSZip arrives from cdnjs at runtime (a <script> tag in ui.html) — offline or
@@ -395,30 +402,31 @@ function jszipAvailable(): boolean {
 // JSZip global either exists or never will — surface a blocked cdnjs load the
 // moment the UI opens, not at download time.
 if (typeof JSZip === 'undefined') {
-  setStatus('JSZip failed to load from cdnjs (offline / proxy?) — Download Frame will not save bundles.', true);
+  setStatus('JSZip failed to load from cdnjs (offline / proxy?) — ZIP export is unavailable.', true);
 }
 
-async function downloadBundle(manifestJson: string, assets: BinaryAsset[]) {
-  if (!jszipAvailable()) return;
+async function downloadBundle(bundleName: string, frames: BundleFrame[]) {
   try {
+    if (!jszipAvailable()) return;
     const zip = new JSZip();
-    const images = new AssetBundle();
-    zip.folder('Imgs/AltasImgs');
-    zip.folder('Imgs/RawImgs');
-    zip.file('manifest.json', await images.manifest(manifestJson, assets));
-    for (const [path, data] of images.files) zip.file(path, data);
+    const bundle = await createSharedBundle(bundleName, frames);
+    for (const directory of bundle.directories) zip.folder(directory);
+    for (const [path, data] of bundle.files) zip.file(path, data);
     const blob = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(blob);
-    const screen = JSON.parse(manifestJson).screen?.name || 'figforge';
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${screen}_figforge.zip`;
+    a.download = `${bundleName}.zip`;
     a.click();
     URL.revokeObjectURL(url);
     // Success is only claimed HERE — after the zip blob is handed to the browser.
-    setStatus(`Exported ${images.files.size} unique asset(s). Bundle downloaded.`);
+    setStatus(`已导出 ${frames.length} 个预制体 JSON、${bundle.imageCount} 张共享图片。请将 ZIP 解压到目标目录。`);
   } catch (e) {
     setStatus(`Bundle packaging failed — ${String((e as Error)?.message || e)}; bundle not saved.`, true);
+  } finally {
+    exportBusy = false;
+    showProgress(false);
+    updateExportButton();
   }
 }
 
@@ -514,23 +522,24 @@ window.onmessage = (event: MessageEvent) => {
       setStatus(`设置${msg.operation === 'load' ? '读取' : '保存'}失败：${msg.error}`);
       break;
     case 'selection-info':
-      const previousRootId = currentTree?.id;
-      currentTree = msg.tree;
+      const previousRoots = currentTrees.map(tree => tree.id).join(',');
+      currentTrees = msg.trees;
       selectedId = null;
-      if (currentTree && currentTree.id !== previousRootId) primeExpandedNodes(currentTree);
+      if (currentTrees.map(tree => tree.id).join(',') !== previousRoots)
+        expandedNodes = new Set(currentTrees.map(tree => tree.id));
       const size = msg.size && Number.isFinite(msg.size.w) && Number.isFinite(msg.size.h)
         ? ` · ${Math.round(msg.size.w)}×${Math.round(msg.size.h)}`
         : '';
       setStatus(`${msg.name} · ${msg.elementCount} layers${size}`);
-      ($('#exportBtn') as HTMLButtonElement).disabled = false;
+      updateExportButton();
       renderTree();
       break;
 
     case 'no-selection':
-      currentTree = null;
-      ($('#exportBtn') as HTMLButtonElement).disabled = true;
+      currentTrees = [];
+      updateExportButton();
       expandedNodes = new Set();
-      setStatus('Select a frame, component, or group.');
+      setStatus(msg.error || '请选择一个或多个同级 Frame、组件或 Group。');
       renderTree();
       break;
 
@@ -570,11 +579,13 @@ window.onmessage = (event: MessageEvent) => {
     case 'export-complete':
       showProgress(false);
       setProgress(0);
-      downloadBundle(msg.manifest, msg.assets);
+      void downloadBundle(msg.bundleName, msg.frames);
 
       break;
 
     case 'export-error':
+      exportBusy = false;
+      updateExportButton();
       showProgress(false);
       setStatus(msg.message, true);
       break;

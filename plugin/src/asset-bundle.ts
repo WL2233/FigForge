@@ -52,12 +52,10 @@ export function sha256(bytes: Uint8Array): string {
   return Array.from(state, word => word.toString(16).padStart(8, '0')).join('');
 }
 
-/** Shared image store: hashes deduplicate content, filenames retain export names. */
+/** Content-addressed images have the same path across frames and export sessions. */
 export class AssetBundle {
   readonly files = new Map<string, Uint8Array>();
   private readonly hashToPath = new Map<string, string>();
-  // Unity imports into a flat folder; reserve names across both image folders.
-  private readonly usedNames = new Set<string>();
 
   async manifest(json: string, assets: BinaryAsset[], prefix = ''): Promise<string> {
     const paths = new Map<string, string>();
@@ -75,13 +73,7 @@ export class AssetBundle {
       const folder = width < 512 && height < 512 ? 'AltasImgs' : 'RawImgs';
       let path = this.hashToPath.get(hash);
       if (!path) {
-        const name = asset.name.replace(/\\/g, '/').split('/').pop()!;
-        const stem = name.replace(/\.png$/i, '') || 'image';
-        let file = `${stem}.png`;
-        let suffix = 2;
-        while (this.usedNames.has(file.toLowerCase())) file = `${stem}_${suffix++}.png`;
-        this.usedNames.add(file.toLowerCase());
-        path = `Imgs/${folder}/${file}`;
+        path = `${folder}/${hash}.png`;
         this.hashToPath.set(hash, path);
         this.files.set(path, bytes);
       }
@@ -108,4 +100,42 @@ export class AssetBundle {
     });
     return JSON.stringify(manifest, null, 2);
   }
+}
+
+export interface BundleFrame {
+  manifest: string;
+  assets: BinaryAsset[];
+}
+
+/** Validate the user-supplied directory as one portable path component. */
+export function validateBundleName(name: string): string {
+  if (!name || name !== name.trim() || /[<>:"/\\|?*\x00-\x1f]/.test(name) ||
+      /[. ]$/.test(name) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) {
+    throw new Error('请输入有效的文件夹名：不能包含路径分隔符、特殊字符、首尾空格或系统保留名称。');
+  }
+  return name;
+}
+
+/** Build files before downloading: no partial ZIP on invalid/duplicate frame names. */
+export async function createSharedBundle(name: string, frames: BundleFrame[]) {
+  const root = validateBundleName(name);
+  if (!frames.length) throw new Error('没有可导出的节点。');
+  const used = new Set(['altasimgs', 'rawimgs']);
+  const folders = frames.map(frame => {
+    const screen = JSON.parse(frame.manifest).screen?.name;
+    if (typeof screen !== 'string' || !screen) throw new Error('导出节点缺少名称。');
+    const folder = screen.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/g, '_').trim();
+    validateBundleName(folder);
+    if (used.has(folder.toLowerCase()))
+      throw new Error(`预制体文件夹名重复或与资源目录冲突：${folder}。请重命名后重新导出。`);
+    used.add(folder.toLowerCase());
+    return folder;
+  });
+  const images = new AssetBundle();
+  const files = new Map<string, string | Uint8Array>();
+  for (const [i, frame] of frames.entries()) {
+    files.set(`${root}/${folders[i]}/manifest.json`, await images.manifest(frame.manifest, frame.assets, '../'));
+  }
+  for (const [path, bytes] of images.files) files.set(`${root}/${path}`, bytes);
+  return { files, directories: [`${root}/AltasImgs`, `${root}/RawImgs`], imageCount: images.files.size };
 }

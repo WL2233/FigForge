@@ -36,12 +36,14 @@ const merged = new Set<string>();
 const forcedPng = new Set<string>();
 const passthrough = new Set<string>();
 
-function selectedRoot(): SceneNode | null {
-  const sel = figma.currentPage.selection;
-  if (sel.length === 0) return null;
-  const node = sel[0];
-  const ok = ['FRAME', 'COMPONENT', 'COMPONENT_SET', 'INSTANCE', 'GROUP'].includes(node.type);
-  return ok ? node : null;
+function selectedRoots(): SceneNode[] {
+  const roots = [...figma.currentPage.selection];
+  if (!roots.length) throw new Error('请选择一个或多个同级 Frame、组件或 Group。');
+  if (roots.some(node => !['FRAME', 'COMPONENT', 'COMPONENT_SET', 'INSTANCE', 'GROUP'].includes(node.type)))
+    throw new Error('选中项必须全部是 Frame、组件或 Group。');
+  if (roots.some(node => node.parent?.id !== roots[0].parent?.id))
+    throw new Error('批量导出请选择同一父级下并列的节点。');
+  return roots;
 }
 
 // buildTree is async, so two pushSelection runs can overlap (selectionchange
@@ -54,24 +56,23 @@ let pushSelectionToken = 0;
 async function pushSelection() {
   const token = ++pushSelectionToken;
   try {
-    const root = selectedRoot();
-    if (!root) {
-      if (token === pushSelectionToken) figma.ui.postMessage({ type: 'no-selection' });
-      return;
-    }
-    const tree = await buildTree(root, excluded);
+    const roots = selectedRoots();
+    const trees = [];
+    for (const root of roots) trees.push(await buildTree(root, excluded));
     if (token !== pushSelectionToken) return; // superseded by a newer pushSelection
+    const root = roots[0];
     const size = {
       w: (root as unknown as { width?: number }).width ?? 0,
       h: (root as unknown as { height?: number }).height ?? 0,
     };
     let count = 0;
-    const walk = (n: typeof tree) => {
+    const walk = (n: typeof trees[number]) => {
       count++;
       n.children.forEach(walk);
     };
-    walk(tree);
-    figma.ui.postMessage({ type: 'selection-info', name: root.name, elementCount: count, size, tree });
+    trees.forEach(walk);
+    figma.ui.postMessage({ type: 'selection-info', name: roots.map(n => n.name).join('、'),
+      elementCount: count, size: roots.length === 1 ? size : null, trees });
   } catch (e) {
     if (token === pushSelectionToken) {
       figma.ui.postMessage({ type: 'no-selection', error: String((e as Error)?.message || e) });
@@ -161,7 +162,6 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
     case 'highlight-element': {
       const node = await figma.getNodeByIdAsync(msg.nodeId as string) as SceneNode | null;
       if (node) {
-        figma.currentPage.selection = [node];
         figma.viewport.scrollAndZoomIntoView([node]);
       }
       break;
@@ -179,31 +179,34 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
         figma.ui.postMessage({ type: 'status', message: EXPORT_BUSY_MESSAGE, error: true });
         break;
       }
-      const root = selectedRoot();
-      if (!root) {
-        figma.ui.postMessage({ type: 'export-error', message: 'Select a frame to export.' });
-        break;
-      }
       exportInFlight = true;
       try {
+        // Snapshot the selection once; selection changes cannot alter this batch.
+        const roots = selectedRoots();
         const scale = (msg.scale as ExportScale) || DEFAULT_EXPORT_SCALE;
         const options: ExportOptions = { ...DEFAULT_EXPORT_OPTIONS, cleanNames: (msg.options as Partial<ExportOptions> | undefined)?.cleanNames === true };
         applyConfigs(msg.elementConfigs as ElementConfig[] | undefined);
-        const result = await exportDesign(
-          root,
-          scale,
-          options,
-          excluded,
-          merged,
-          forcedPng,
-          passthrough,
-          (current, total, label) =>
-            figma.ui.postMessage({ type: 'progress', current, total, label })
-        );
+        const frames = [];
+        for (const [index, root] of roots.entries()) {
+          const result = await exportDesign(
+            root,
+            scale,
+            options,
+            excluded,
+            merged,
+            forcedPng,
+            passthrough,
+            (current, total, label) =>
+              figma.ui.postMessage({ type: 'progress',
+                current: index + (total ? current / total : 0), total: roots.length,
+                label: `${root.name} (${index + 1}/${roots.length}) · ${label}` })
+          );
+          frames.push({ manifest: JSON.stringify(result.manifest, null, 2), assets: result.assets });
+        }
         figma.ui.postMessage({
           type: 'export-complete',
-          manifest: JSON.stringify(result.manifest, null, 2),
-          assets: result.assets,
+          frames,
+          bundleName: msg.bundleName,
         });
       } catch (e) {
         figma.ui.postMessage({ type: 'export-error', message: String((e as Error)?.message || e) });

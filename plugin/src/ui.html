@@ -245,7 +245,9 @@
   .progress { height: 4px; border-radius: 2px; background: var(--panel-soft); overflow: hidden; margin-top: 7px; display: none; }
   .progress.show { display: block; }
   .progress > div { height: 100%; width: 0; background: linear-gradient(90deg, var(--brand), var(--accent)); transition: width .15s; }
-  .export-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; min-width: 270px; }
+  .export-actions { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px; min-width: 210px; align-items: center; }
+  .export-actions input { width: 100%; min-width: 0; }
+  .export-actions button { grid-column: 1 / -1; }
   .btn-primary {
     border: none; border-radius: var(--radius); padding: 9px 10px; min-height: 34px;
     background: var(--brand-strong); color: #fff;
@@ -339,7 +341,7 @@
               </div>
             </div>
           </div>
-          <div class="tree" id="tree"><div class="empty">Select a frame in Figma.</div></div>
+          <div class="tree" id="tree"><div class="empty">请选择一个或多个同级 Frame、组件或 Group。</div></div>
           <div class="tree-stats" id="treeStats"></div>
         </div>
         <div class="preview-pane">
@@ -368,7 +370,9 @@
             <div class="progress" id="progress"><div></div></div>
           </div>
           <div class="export-actions">
-            <button class="btn-ghost" id="exportBtn" disabled>Download Frame</button>
+            <label for="bundleName">文件夹名</label>
+            <input id="bundleName" type="text" value="FigForge" placeholder="例如 CommonUI" aria-label="ZIP 内的共享文件夹名" />
+            <button class="btn-ghost" id="exportBtn" disabled>导出 ZIP（0 个）</button>
           </div>
         </div>
       </footer>
