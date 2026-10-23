@@ -49,6 +49,11 @@ try {
   assert.equal(messages.find(m => m.type === 'selection-info').trees.length, 2);
   const request = { type: 'export', bundleName: '公共UI' };
   await figma.ui.onmessage(request);
+  assert.equal(calls.length, 0, 'export requires explicit Add');
+  await figma.ui.onmessage({ type: 'add-selection' });
+  await figma.ui.onmessage({ type: 'add-selection' });
+  assert.equal(messages.at(-1).queuedCount, 2, 'Add deduplicates node IDs');
+  await figma.ui.onmessage(request);
   assert.deepEqual(calls, ['0', '1']);
   const complete = messages.find(m => m.type === 'export-complete');
   assert.equal(complete.bundleName, '公共UI');
@@ -61,13 +66,35 @@ try {
     [roots[0], { ...roots[1], parent: { id: 'other' } }]]) {
     figma.currentPage.selection = invalid;
     messages.length = calls.length = 0;
-    await figma.ui.onmessage(request);
+    await figma.ui.onmessage({ type: 'add-selection' });
     assert.equal(calls.length, 0);
-    assert.ok(messages.some(m => m.type === 'export-error'));
+    assert.ok(messages.some(m => m.type === 'status' && m.error));
+    assert.equal(messages.at(-1).queuedCount, 2, 'invalid selection preserves queue');
   }
+
+  const nested = { id: 'nested', name: '其他层级', type: 'FRAME', parent: roots[0] };
+  figma.currentPage.selection = [nested];
+  await figma.ui.onmessage({ type: 'add-selection' });
+  assert.equal(messages.at(-1).queuedCount, 3);
+  assert.deepEqual(messages.at(-1).trees.map(tree => tree.id), ['0', '1', 'nested']);
+  figma.currentPage.selection = [];
+  await figma.ui.onmessage({ type: 'reload' });
+  assert.equal(messages.at(-1).queuedCount, 3, 'deselection preserves queue');
+  calls.length = 0;
+  await figma.ui.onmessage(request);
+  assert.deepEqual(calls, ['0', '1', 'nested']);
+  nested.removed = true;
+  await figma.ui.onmessage({ type: 'reload' });
+  assert.equal(messages.at(-1).queuedCount, 2, 'removed nodes are pruned');
+  await figma.ui.onmessage({ type: 'clear-selection' });
+  assert.equal(messages.at(-1).type, 'no-selection');
+  calls.length = 0;
+  await figma.ui.onmessage(request);
+  assert.equal(calls.length, 0);
 
   // A batch owns a selection snapshot and prevents concurrent renderer calls.
   figma.currentPage.selection = roots;
+  await figma.ui.onmessage({ type: 'add-selection' });
   messages.length = calls.length = 0;
   let release;
   const pending = new Promise(resolve => { release = resolve; });
@@ -92,8 +119,10 @@ try {
   assert.ok(!messages.some(m => m.type === 'export-complete'));
   performExport = async root => ({ manifest: { screen: { name: root.name }, assets: [] }, assets: [] });
   await figma.ui.onmessage(request);
-  assert.equal(messages.find(m => m.type === 'export-complete').frames.length, 1);
-  console.log('PASS: sibling selection, batch export, preview selection, invalid roots, snapshot, concurrency and failure recovery');
+  assert.equal(messages.find(m => m.type === 'export-complete').frames.length, 2);
+  await figma.ui.onmessage({ type: 'clear-selection' });
+  assert.equal(messages.at(-1).queuedCount, 0, 'Clear does not automatically add current selection');
+  console.log('PASS: Add/Clear, mixed-level queue, deduplication, invalid selection, deleted nodes, snapshot, concurrency and failure recovery');
 } finally {
   hooks.deregister();
   delete globalThis.__figforgeTest;

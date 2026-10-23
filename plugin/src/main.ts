@@ -35,6 +35,8 @@ const excluded = new Set<string>();
 const merged = new Set<string>();
 const forcedPng = new Set<string>();
 const passthrough = new Set<string>();
+// Explicit Add operations own this list; canvas selection changes never clear it.
+const exportRoots = new Map<string, SceneNode>();
 
 function selectedRoots(): SceneNode[] {
   const roots = [...figma.currentPage.selection];
@@ -56,7 +58,16 @@ let pushSelectionToken = 0;
 async function pushSelection() {
   const token = ++pushSelectionToken;
   try {
-    const roots = selectedRoots();
+    let selection: SceneNode[] = [];
+    let selectionError = '';
+    try { selection = selectedRoots(); }
+    catch (e) { selectionError = (e as Error).message; }
+    for (const [id, node] of exportRoots) if (node.removed) exportRoots.delete(id);
+    const roots = exportRoots.size ? [...exportRoots.values()] : selection;
+    if (!roots.length) {
+      if (token === pushSelectionToken) figma.ui.postMessage({ type: 'no-selection', error: selectionError });
+      return;
+    }
     const trees = [];
     for (const root of roots) trees.push(await buildTree(root, excluded));
     if (token !== pushSelectionToken) return; // superseded by a newer pushSelection
@@ -72,7 +83,8 @@ async function pushSelection() {
     };
     trees.forEach(walk);
     figma.ui.postMessage({ type: 'selection-info', name: roots.map(n => n.name).join('、'),
-      elementCount: count, size: roots.length === 1 ? size : null, trees });
+      elementCount: count, size: roots.length === 1 ? size : null, trees,
+      queuedCount: exportRoots.size, canAdd: selection.length > 0, selectionError });
   } catch (e) {
     if (token === pushSelectionToken) {
       figma.ui.postMessage({ type: 'no-selection', error: String((e as Error)?.message || e) });
@@ -117,6 +129,22 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
   // Wait for every page to load before handling document messages.
   await pagesLoaded;
   switch (msg.type) {
+    case 'add-selection':
+      if (exportInFlight) break;
+      try {
+        for (const root of selectedRoots()) exportRoots.set(root.id, root);
+      } catch (e) {
+        figma.ui.postMessage({ type: 'status', message: (e as Error).message, error: true });
+      }
+      await pushSelection();
+      break;
+
+    case 'clear-selection':
+      if (exportInFlight) break;
+      exportRoots.clear();
+      await pushSelection();
+      break;
+
     case 'reload':
       await pushSelection();
       break;
@@ -181,8 +209,10 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
       }
       exportInFlight = true;
       try {
-        // Snapshot the selection once; selection changes cannot alter this batch.
-        const roots = selectedRoots();
+        // Snapshot only explicitly added roots, across any parents or pages.
+        const roots = [...exportRoots.values()];
+        if (!roots.length) throw new Error('请先点击 Add 添加要导出的节点。');
+        if (roots.some(root => root.removed)) throw new Error('已添加的节点已被删除，请刷新列表后重新导出。');
         const scale = (msg.scale as ExportScale) || DEFAULT_EXPORT_SCALE;
         const options: ExportOptions = { ...DEFAULT_EXPORT_OPTIONS, cleanNames: (msg.options as Partial<ExportOptions> | undefined)?.cleanNames === true };
         applyConfigs(msg.elementConfigs as ElementConfig[] | undefined);

@@ -29,9 +29,13 @@ const forcedPng = new Set<string>();
 const passthrough = new Set<string>();
 let currentTrees: TreeNode[] = [];
 let exportBusy = false;
+let queuedCount = 0;
+let canAdd = false;
 function updateExportButton() {
-  ($('#exportBtn') as HTMLButtonElement).disabled = exportBusy || !currentTrees.length;
-  $('#exportBtn').textContent = exportBusy ? '导出中…' : `导出 ZIP（${currentTrees.length} 个）`;
+  ($('#exportBtn') as HTMLButtonElement).disabled = exportBusy || !queuedCount;
+  $('#exportBtn').textContent = exportBusy ? '导出中…' : `导出 ZIP（${queuedCount} 个）`;
+  $<HTMLButtonElement>('#addSelectionBtn').disabled = exportBusy || !canAdd;
+  $<HTMLButtonElement>('#clearSelectionBtn').disabled = exportBusy || !queuedCount;
 }
 let selectedId: string | null = null;
 let expandedNodes = new Set<string>();
@@ -376,6 +380,8 @@ function currentOptions(): ExportOptions {
   return { ...DEFAULT_EXPORT_OPTIONS, cleanNames: ($('#optCleanNames input') as HTMLInputElement).checked };
 }
 
+$('#addSelectionBtn').addEventListener('click', () => post({ type: 'add-selection' }));
+$('#clearSelectionBtn').addEventListener('click', () => post({ type: 'clear-selection' }));
 $('#exportBtn').addEventListener('click', () => {
   if (exportBusy) return;
   let bundleName: string;
@@ -524,19 +530,24 @@ window.onmessage = (event: MessageEvent) => {
     case 'selection-info':
       const previousRoots = currentTrees.map(tree => tree.id).join(',');
       currentTrees = msg.trees;
+      queuedCount = msg.queuedCount;
+      canAdd = msg.canAdd;
       selectedId = null;
       if (currentTrees.map(tree => tree.id).join(',') !== previousRoots)
         expandedNodes = new Set(currentTrees.map(tree => tree.id));
       const size = msg.size && Number.isFinite(msg.size.w) && Number.isFinite(msg.size.h)
         ? ` · ${Math.round(msg.size.w)}×${Math.round(msg.size.h)}`
         : '';
-      setStatus(`${msg.name} · ${msg.elementCount} layers${size}`);
+      setStatus(`${queuedCount ? `已添加 ${queuedCount} 个` : '当前选择（点击 Add 加入导出）'} · ${msg.name} · ${msg.elementCount} layers${size}`);
+      if (msg.selectionError) setStatus(msg.selectionError);
       updateExportButton();
       renderTree();
       break;
 
     case 'no-selection':
       currentTrees = [];
+      queuedCount = 0;
+      canAdd = false;
       updateExportButton();
       expandedNodes = new Set();
       setStatus(msg.error || '请选择一个或多个同级 Frame、组件或 Group。');
