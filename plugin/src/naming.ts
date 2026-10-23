@@ -23,12 +23,10 @@ export function fileSafeName(raw: string): string {
   return raw.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/g, '_') || 'node';
 }
 
-/** `<root>_<element>.png` — export scale is stored in the manifest only. */
-export function generateFileName(root: string, element: string, cleanNames = false): string {
-  const r = fileSafeName(exportName(root, cleanNames));
+/** `<element>.png` — root is retained for call-site compatibility; scale stays in the manifest. */
+export function generateFileName(_root: string, element: string, cleanNames = false): string {
   const e = fileSafeName(exportName(element, cleanNames));
-  const base = r && e ? `${r}_${e}` : r || e;
-  return `${base}.png`;
+  return `${e}.png`;
 }
 
 // ---------------------------------------------------------------------------
