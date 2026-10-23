@@ -205,15 +205,10 @@ namespace FigForge
 
         void OnDestroy() => _stack.Remove(this);
 
-        // Works under BOTH input backends. The legacy Input.GetKeyDown THROWS every frame
-        // when the project's Active Input Handling is "Input System Package" (legacy off),
-        // so each path is gated by Unity's built-in input defines.
+        // Use the built-in Input Manager without a dependency on the Input System package.
+        // Keep the guard so projects with legacy input disabled do not throw every frame.
         static bool EscapePressedThisFrame()
         {
-#if ENABLE_INPUT_SYSTEM
-            var kb = UnityEngine.InputSystem.Keyboard.current;
-            if (kb != null && kb.escapeKey.wasPressedThisFrame) return true;
-#endif
 #if ENABLE_LEGACY_INPUT_MANAGER
             if (Input.GetKeyDown(KeyCode.Escape)) return true;
 #endif

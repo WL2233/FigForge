@@ -2,6 +2,8 @@
 
 Install this UPM package, then open **Window → FigForge → Importer**.
 
+Input uses Unity's built-in Input Manager; this package does not install or reference the newer Input System package. Use **Active Input Handling → Input Manager (Old)** (or **Both** if your project already needs both backends). Modal Escape-to-close requires the legacy Input Manager to be enabled.
+
 1. Import a ZIP exported by the Figma plugin.
 2. Configure fonts, texture options and prefab output folder.
 3. Generate a single frame prefab, or select a page bundle and generate all frame prefabs.

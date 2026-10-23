@@ -3,8 +3,7 @@
   "rootNamespace": "FigForge",
   "references": [
     "UnityEngine.UI",
-    "Unity.TextMeshPro",
-    "Unity.InputSystem"
+    "Unity.TextMeshPro"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
