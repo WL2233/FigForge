@@ -52,10 +52,11 @@ export function sha256(bytes: Uint8Array): string {
   return Array.from(state, word => word.toString(16).padStart(8, '0')).join('');
 }
 
-/** Content-addressed images have the same path across frames and export sessions. */
+/** Hashes deduplicate images within a ZIP; filenames retain the first export name. */
 export class AssetBundle {
   readonly files = new Map<string, Uint8Array>();
   private readonly hashToPath = new Map<string, string>();
+  private readonly usedPaths = new Set<string>();
 
   async manifest(json: string, assets: BinaryAsset[], prefix = ''): Promise<string> {
     const paths = new Map<string, string>();
@@ -73,7 +74,18 @@ export class AssetBundle {
       const folder = width < 512 && height < 512 ? 'AltasImgs' : 'RawImgs';
       let path = this.hashToPath.get(hash);
       if (!path) {
-        path = `${folder}/${hash}.png`;
+        // The exporter already supplies a safe PNG filename. Strip any directory
+        // component, but preserve its Unicode, case and extension. Only different
+        // content claiming the same destination needs a numbered suffix.
+        const name = asset.name.replace(/\\/g, '/').split('/').pop() || 'image.png';
+        const extension = /\.png$/i.test(name) ? name.slice(-4) : '';
+        const stem = extension ? name.slice(0, -4) : name;
+        let file = name;
+        let suffix = 2;
+        while (this.usedPaths.has(`${folder}/${file}`.toLowerCase()))
+          file = `${stem}_${suffix++}${extension}`;
+        path = `${folder}/${file}`;
+        this.usedPaths.add(path.toLowerCase());
         this.hashToPath.set(hash, path);
         this.files.set(path, bytes);
       }
