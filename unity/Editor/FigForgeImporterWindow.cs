@@ -46,8 +46,12 @@ namespace FigForge
         const string ImportsFolder = "Assets/FigForge/Imports";
         int _warmUpBatchSize = DefaultWarmUpBatchSize;
         int _editorColumns = DefaultEditorColumns;
-        string _spriteFolder = "Assets/FigForge/Sprites";
-        string _prefabFolder = "Assets/FigForge/Prefabs";
+        const string DefaultAtlasFolder = "Assets/AssetRaw/UIRaw/Atlas";
+        const string DefaultRawFolder = "Assets/AssetRaw/UIRaw/Raw";
+        const string DefaultPrefabFolder = "Assets/AssetRaw/UI";
+        string _atlasFolder = DefaultAtlasFolder;
+        string _rawFolder = DefaultRawFolder;
+        string _prefabFolder = DefaultPrefabFolder;
 
         TextureImportSettings _tex = new TextureImportSettings();
 
@@ -89,8 +93,9 @@ namespace FigForge
             public bool deleteImportsAfterBuild;
             public int warmUpBatchSize = DefaultWarmUpBatchSize;
             public int editorColumns = DefaultEditorColumns;
-            public string spriteFolder = "Assets/FigForge/Sprites";
-            public string prefabFolder = "Assets/FigForge/Prefabs";
+            public string atlasFolder = DefaultAtlasFolder;
+            public string rawFolder = DefaultRawFolder;
+            public string prefabFolder = DefaultPrefabFolder;
             public TextureImportSettings tex = new TextureImportSettings();
             public Dictionary<string, string> fonts = new Dictionary<string, string>();
         }
@@ -111,7 +116,8 @@ namespace FigForge
                     deleteImportsAfterBuild = _deleteImportsAfterBuild,
                     warmUpBatchSize = _warmUpBatchSize,
                     editorColumns = _editorColumns,
-                    spriteFolder = _spriteFolder,
+                    atlasFolder = _atlasFolder,
+                    rawFolder = _rawFolder,
                     prefabFolder = _prefabFolder,
                     tex = _tex,
                     fonts = _fontMap.ToDictionary(pair => pair.Key, pair => ObjectId(pair.Value)),
@@ -148,8 +154,10 @@ namespace FigForge
             _deleteImportsAfterBuild = settings.deleteImportsAfterBuild;
             _warmUpBatchSize = settings.warmUpBatchSize;
             _editorColumns = settings.editorColumns;
-            _spriteFolder = settings.spriteFolder ?? "Assets/FigForge/Sprites";
-            _prefabFolder = settings.prefabFolder ?? "Assets/FigForge/Prefabs";
+            _atlasFolder = string.IsNullOrWhiteSpace(settings.atlasFolder) ? DefaultAtlasFolder : settings.atlasFolder;
+            _rawFolder = string.IsNullOrWhiteSpace(settings.rawFolder) ? DefaultRawFolder : settings.rawFolder;
+            _prefabFolder = string.IsNullOrWhiteSpace(settings.prefabFolder) || settings.prefabFolder == "Assets/FigForge/Prefabs"
+                ? DefaultPrefabFolder : settings.prefabFolder;
             _tex = settings.tex ?? new TextureImportSettings();
             _warmUpBatchSize = Mathf.Clamp(_warmUpBatchSize, 1, 8192);
             _editorColumns = Mathf.Clamp(_editorColumns, 1, 50);
@@ -326,6 +334,7 @@ namespace FigForge
 
             Header();
             SettingsBar();
+            OutputFoldersSection();
             ManifestPicker();
             if (_manifest != null)
             {
@@ -487,8 +496,50 @@ namespace FigForge
             var projectIdx = _projectPaths.IndexOf(manifestPath);
             if (projectIdx >= 0) _selectedProject = projectIdx;
             var idx = _manifestPaths.IndexOf(manifestPath);
+            if (projectIdx >= 0)
+            {
+                var project = ManifestParser.LoadProject(manifestPath);
+                var first = project?.screens?.FirstOrDefault();
+                if (first != null)
+                {
+                    var firstPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(manifestPath), first.manifest));
+                    idx = _manifestPaths.FindIndex(p => string.Equals(Path.GetFullPath(p), firstPath,
+                        System.StringComparison.OrdinalIgnoreCase));
+                }
+            }
             if (idx >= 0) { _selected = idx; LoadSelected(); }
             FocusFontsFoldout();
+        }
+
+        void OutputFoldersSection()
+        {
+            using (new EditorGUILayout.VerticalScope(_styles.card))
+            {
+                EditorGUILayout.LabelField("导入根目录", _styles.sectionTitle);
+                _atlasFolder = FolderField("图集图", _atlasFolder);
+                _rawFolder = FolderField("原图", _rawFolder);
+                _prefabFolder = FolderField("预制体", _prefabFolder);
+                EditorGUILayout.LabelField("实际输出：所选根目录 / ZIP 内根节点名称 / 文件", _styles.subtleLabel);
+            }
+        }
+
+        string FolderField(string label, string value)
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                value = EditorGUILayout.TextField(label, value);
+                if (GUILayout.Button("选择…", _styles.button, GUILayout.Width(60)))
+                {
+                    var selected = EditorUtility.OpenFolderPanel(label + "根目录", Application.dataPath, "");
+                    if (!string.IsNullOrEmpty(selected))
+                    {
+                        var relative = FileUtil.GetProjectRelativePath(selected);
+                        try { value = ZipImporter.NormalizeAssetsFolder(relative); }
+                        catch (System.Exception ex) { Log(ex.Message, MessageType.Error); }
+                    }
+                }
+            }
+            return value;
         }
 
         void CanvasSection()
@@ -497,7 +548,7 @@ namespace FigForge
             {
                 _showCanvas = Foldout(_showCanvas, "Prefab output");
                 if (!_showCanvas) return;
-                _prefabFolder = EditorGUILayout.TextField("Prefab folder", _prefabFolder);
+
                 _scalePreset = (ScalePreset)EditorGUILayout.EnumPopup("Scale", _scalePreset);
                 if (_scalePreset == ScalePreset.Custom) _customRefHeight = EditorGUILayout.FloatField("Reference height", _customRefHeight);
                 _disableRaycasts = EditorGUILayout.ToggleLeft("Disable decorative raycasts", _disableRaycasts);
@@ -535,7 +586,7 @@ namespace FigForge
                 if (!_showTextures) return;
                 using (new EditorGUI.IndentLevelScope())
                 {
-                    _spriteFolder = EditorGUILayout.TextField("Sprite folder", _spriteFolder);
+
                     _tex.autoMaxSize = EditorGUILayout.ToggleLeft("Auto max size", _tex.autoMaxSize, _styles.toggle);
                     if (!_tex.autoMaxSize) _tex.maxSize = EditorGUILayout.IntField("Max size", _tex.maxSize);
                     _tex.compression = (TextureImporterCompression)EditorGUILayout.EnumPopup("Compression", _tex.compression);
@@ -601,8 +652,11 @@ namespace FigForge
         string BuildPrefab(Manifest manifest, string sourceDir, string section, string role = "screen")
         {
             FontAutoImporter.ClearCache();
-            var folder = $"{_spriteFolder}/{SafeName(manifest.screen.name)}";
-            var sprites = TextureImportHelper.Import(manifest, sourceDir, folder, _tex);
+            var bundleName = Path.GetFileName(ZipImporter.BundleRoot(sourceDir));
+            var atlasFolder = ZipImporter.NormalizeAssetsFolder(_atlasFolder) + "/" + bundleName;
+            var rawFolder = ZipImporter.NormalizeAssetsFolder(_rawFolder) + "/" + bundleName;
+            var prefabFolder = ZipImporter.NormalizeAssetsFolder(_prefabFolder) + "/" + bundleName;
+            var sprites = TextureImportHelper.Import(manifest, sourceDir, atlasFolder, rawFolder, _tex);
             var scene = UnityEditor.SceneManagement.EditorSceneManager.NewPreviewScene();
             try
             {
@@ -621,8 +675,8 @@ namespace FigForge
                 if (isOverlay && page.GetComponent<FigForgeOverlayLayer>() == null)
                     page.AddComponent<FigForgeOverlayLayer>();
                 RegisterFrameElements(page, manifest, ctx, isOverlay);
-                TextureImportHelper.EnsureFolder(_prefabFolder);
-                var path = $"{_prefabFolder}/{SafeName(manifest.screen.name)}.prefab";
+                TextureImportHelper.EnsureFolder(prefabFolder);
+                var path = $"{prefabFolder}/{SafeName(manifest.screen.name)}.prefab";
                 var saved = PrefabUtility.SaveAsPrefabAsset(page, path);
                 if (saved == null) throw new System.IO.IOException($"Could not save prefab: {path}");
                 Log($"saved prefab → {path}", MessageType.Info);
@@ -751,7 +805,7 @@ namespace FigForge
             {
                 // A configurable output or a manually selected font may still live in Imports.
                 // Include recursive dependencies so deleting sources cannot break the saved prefabs.
-                if (IsInsideImports(_prefabFolder) || IsInsideImports(_spriteFolder) ||
+                if (IsInsideImports(_prefabFolder) || IsInsideImports(_atlasFolder) || IsInsideImports(_rawFolder) ||
                     AssetDatabase.GetDependencies(prefabPaths, true).Any(IsInsideImports))
                 {
                     Log("预制体已生成，但输出目录或资源依赖仍位于 Imports 内，已保留导入资源。", MessageType.Warning);

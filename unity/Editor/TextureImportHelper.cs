@@ -29,11 +29,15 @@ namespace FigForge
         /// </summary>
         public static Dictionary<string, Sprite> Import(
             Manifest manifest, string sourceDir, string targetFolder, TextureImportSettings settings)
+            => Import(manifest, sourceDir, targetFolder + "/AltasImgs", targetFolder + "/RawImgs", settings);
+
+        public static Dictionary<string, Sprite> Import(
+            Manifest manifest, string sourceDir, string atlasFolder, string rawFolder, TextureImportSettings settings)
         {
             var result = new Dictionary<string, Sprite>();
+            EnsureFolder(atlasFolder);
+            EnsureFolder(rawFolder);
             if (manifest.assets == null || manifest.assets.Count == 0) return result;
-
-            EnsureFolder(targetFolder);
 
             // 9-slice border per asset filename, auto-detected from the PNG's alpha
             // for slice CANDIDATES — rounded/bordered panels (style.cornerRadius>0)
@@ -68,19 +72,12 @@ namespace FigForge
             foreach (var asset in manifest.assets)
             {
                 var src = ResolveSource(sourceDir, asset.file);
-                if (!File.Exists(src)) { Debug.LogWarning($"[FigForge] missing PNG: {asset.file}"); continue; }
+                if (!File.Exists(src)) throw new FileNotFoundException($"[FigForge] missing PNG: {asset.file}", src);
                 var category = ImageCategory(asset.file, src);
-                var folder = $"{targetFolder}/{category}";
+                var folder = category == "AltasImgs" ? atlasFolder : rawFolder;
                 EnsureFolder(folder);
                 var file = Path.GetFileName(asset.file.Replace('\\', '/'));
                 var dst = $"{folder}/{file}";
-                // Preserve existing sprite GUIDs when upgrading the old flat layout.
-                var legacy = $"{targetFolder}/{file}";
-                if (!File.Exists(dst) && File.Exists(legacy))
-                {
-                    var error = AssetDatabase.MoveAsset(legacy, dst);
-                    if (!string.IsNullOrEmpty(error)) throw new IOException(error);
-                }
                 destinations[asset.file] = dst;
             }
 
@@ -168,10 +165,7 @@ namespace FigForge
 
         static string ResolveSource(string sourceDir, string file)
         {
-            var root = Path.GetFullPath(sourceDir);
-            var parent = Directory.GetParent(root);
-            if (parent != null && File.Exists(Path.Combine(parent.FullName, "project.json")))
-                root = parent.FullName;
+            var root = ZipImporter.BundleRoot(sourceDir);
             var path = Path.GetFullPath(Path.Combine(sourceDir, file));
             if (Path.IsPathRooted(file) || file.Contains(":") ||
                 !path.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
@@ -231,6 +225,7 @@ namespace FigForge
 
         public static void EnsureFolder(string folder)
         {
+            folder = ZipImporter.NormalizeAssetsFolder(folder);
             if (AssetDatabase.IsValidFolder(folder)) return;
             var parts = folder.Split('/');
             string cur = parts[0];
