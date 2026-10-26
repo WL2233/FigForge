@@ -98,7 +98,7 @@ try {
 
     # Match the release package: omit development Tests and preserve asset metadata.
     $unityFiles = @()
-    foreach ($directory in @('Editor', 'Runtime', 'Fonts')) {
+    foreach ($directory in @('Editor', 'Runtime')) {
         $path = Join-Path $unity $directory
         if (-not (Test-Path -LiteralPath $path -PathType Container)) { throw "Missing package directory: $path" }
         $unityFiles += @(Get-ChildItem -LiteralPath $path -File -Recurse)
