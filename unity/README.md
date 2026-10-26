@@ -10,7 +10,7 @@ Input uses Unity's built-in Input Manager; this package does not install or refe
 
 Outputs are uGUI `.prefab` assets. Matching output filenames are overwritten on reimport. The importer builds in a temporary preview scene and closes it after saving; it does not assemble or update your open scene.
 
-The importer does not generate C# accessor scripts or a Canonical Library asset. Pages retain their base FigForgeFrame, container components, runtime element registry and navigation. Controls are built directly inside each page prefab. No Canonical folder, intermediate control prefabs, signature cache or library lookup is created. The exported control definitions are still consumed to preserve visuals, state transitions and bindings.
+The importer does not generate C# accessor scripts or a Canonical Library asset. Generated prefabs contain Unity and TextMesh Pro components only: FigForge page, registry, navigation, binding, custom state and custom graphic components are removed before the prefab is saved. Supported controls are converted to their native Button, Toggle, Slider, ScrollRect, TMP_InputField or TMP_Dropdown equivalents. FigForge-only rendering and behaviour degrade to the closest static native UI representation. No Canonical folder, intermediate control prefabs, signature cache or library lookup is created.
 
 导入窗口提供三个独立的根目录，可输入路径或点击“选择…”（须位于 Assets 内），点击 Apply 保存设置，Reset 恢复默认值：
 
@@ -26,6 +26,6 @@ The importer does not generate C# accessor scripts or a Canonical Library asset.
 
 When upgrading an existing Unity project, previously generated scripts and library assets are not deleted automatically. Rebuild affected page prefabs with this importer and migrate application calls to the runtime APIs before removing old Generated files and the old library asset. Old Canonical prefabs are not deleted automatically; rebuild every page that references them before removing those assets. Custom prefab mappings from the removed library are no longer supported.
 
-Place prefabs under your own Canvas and supply your application's navigation and EventSystem. Camera-based blend compositing requires an appropriately configured Canvas/camera.
+Place prefabs under your own Canvas and supply your application's navigation and EventSystem. Camera-based blend compositing is not retained in native-only prefabs; those effects are flattened or degraded during import.
 
 The importer uses ZIP bundles only; no live-import server or token is required. Sprite atlas generation is not supported. The Window → FigForge menu exposes only Importer. Popular-glyph pre-baking, orphan-sprite cleanup and live-page rebuilding are removed. Reference tools remain available in component inspectors.

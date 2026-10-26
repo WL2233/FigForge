@@ -659,6 +659,7 @@ namespace FigForge
                 if (isOverlay && page.GetComponent<FigForgeOverlayLayer>() == null)
                     page.AddComponent<FigForgeOverlayLayer>();
                 RegisterFrameElements(page, manifest, ctx, isOverlay);
+                NativePrefabSanitizer.Convert(page);
                 TextureImportHelper.EnsureFolder(prefabFolder);
                 var path = $"{prefabFolder}/{SafeName(manifest.screen.name)}.prefab";
                 var saved = PrefabUtility.SaveAsPrefabAsset(page, path);
@@ -682,7 +683,9 @@ namespace FigForge
                 scaleFactor = sf, sprites = sprites, disableRaycasts = _disableRaycasts,
                 warmUpBatchSize = _warmUpBatchSize,
                 exportScale = m.screen != null ? m.screen.exportScale : 1f,
-                vanilla = m.vanilla,
+                // Prefabs are intentionally exported with Unity/TMP-native components only.
+                // Always use the shader-free rendering path before the final component pass.
+                vanilla = true,
                 resolveFont = ResolveFontAsset,
                 log = mm => Log(mm, MessageType.Warning),
             };

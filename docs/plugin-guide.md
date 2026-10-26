@@ -34,7 +34,7 @@ Download Frame exports one frame; Download Page exports a ZIP containing all fra
 | Figma | Unity |
 |------|------|
 | Frame / Group / Component with a fill or stroke | `Image` (sprite or procedural fill) |
-| Pure container (no fill/stroke) | structural `FigForgeFrameElement` + `RectTransform` |
+| Pure container (no fill/stroke) | `RectTransform` |
 | Vector / shape / icon group | rasterized PNG → `Image` |
 | Text | `TextMeshProUGUI` (or PNG if forced) |
 | `Btn_<instance>_<ref>` | canonical prefab instance |
