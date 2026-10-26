@@ -28,4 +28,4 @@ When upgrading an existing Unity project, previously generated scripts and libra
 
 Place prefabs under your own Canvas and supply your application's navigation and EventSystem. Camera-based blend compositing requires an appropriately configured Canvas/camera.
 
-The importer uses ZIP bundles only; no live-import server or token is required. Sprite atlas generation is not supported. The Window → FigForge menu exposes only Importer. Popular-glyph pre-baking, orphan-sprite cleanup and live-page rebuilding are removed. The importer provides 检查页面引用 and 填充页面引用 for loaded pages; the same reference tools remain available in component inspectors.
+The importer uses ZIP bundles only; no live-import server or token is required. Sprite atlas generation is not supported. The Window → FigForge menu exposes only Importer. Popular-glyph pre-baking, orphan-sprite cleanup and live-page rebuilding are removed. Reference tools remain available in component inspectors.

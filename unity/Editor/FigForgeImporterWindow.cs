@@ -343,7 +343,6 @@ namespace FigForge
                 TextureSection();
                 BuildBar();
             }
-            PageReferencesSection();
             LogSection();
 
             EditorGUILayout.EndScrollView();
@@ -607,21 +606,6 @@ namespace FigForge
             }
         }
 
-        void PageReferencesSection()
-        {
-            using (new EditorGUILayout.VerticalScope(_styles.card))
-            {
-                EditorGUILayout.LabelField("页面引用", _styles.sectionTitle);
-                EditorGUILayout.HelpBox("检查或填充当前场景中已加载页面的控件引用，不批量处理磁盘上的预制体资源。", MessageType.Info);
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    if (GUILayout.Button("检查页面引用", _styles.button))
-                        FigForgeRefTools.ValidateSceneRefs();
-                    if (GUILayout.Button("填充页面引用", _styles.button))
-                        FigForgeRefTools.PopulateSceneRefs();
-                }
-            }
-        }
         void LogSection()
         {
             if (_log.Count == 0) return;
