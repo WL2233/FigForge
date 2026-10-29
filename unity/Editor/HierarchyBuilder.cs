@@ -633,9 +633,19 @@ namespace FigForge
             // per-corner) and ANY panel with a live blend mode (the Image path can
             // only composite as normal alpha). Plain flat solids stay a cheap Image;
             // image fills are textures.
-            // Vanilla never builds the SDF panel — an assetless rounded/bordered/
-            // gradient panel degrades to a plain (square) tinted Image below.
+            // Vanilla cannot use the SDF panel, but it must not silently lose the
+            // same shape information. Rebuild it with the existing shader-free
+            // rounded/gradient/outline sprite path used by canonical controls.
             if (!hasAsset && !ctx.vanilla && UseSdf(style)) { BuildSdfPanel(go, e, ctx); return; }
+            if (!hasAsset && ctx.vanilla && UseSdf(style))
+            {
+                var img = AddVanillaShapeGraphic(go, VanillaShape(style), ctx);
+                if (img != null) img.raycastTarget = !ctx.disableRaycasts;
+                if (style?.effects != null)
+                    AddVanillaDropShadows(go, style.effects,
+                        style.cornerRadius > 0.01f ? Mathf.RoundToInt(style.cornerRadius * ctx.scaleFactor) : 0, ctx);
+                return;
+            }
 
             var img = go.AddComponent<Image>();
             img.raycastTarget = !ctx.disableRaycasts;
@@ -707,6 +717,31 @@ namespace FigForge
             // Live blend modes need a FigForge graphic even on a flat solid — the
             // plain-Image path would silently drop the blend.
             return rounded || border || hasShadow || layeredPaint || NonNormalBlend(s.blendMode);
+        }
+
+        // Adapt a regular exported element style to the shader-free shape renderer.
+        // Canonical controls already use this renderer; keeping this conversion here
+        // prevents the ordinary element path from dropping radius on gradients,
+        // borders, shadows, or layered paints while vanilla import is forced on.
+        static CanonicalShape VanillaShape(StyleData s)
+        {
+            if (s == null) return null;
+            var primary = s.fill;
+            if (primary == null && s.fills != null && s.fills.Count > 0)
+                primary = s.fills[s.fills.Count - 1];
+            return new CanonicalShape
+            {
+                cornerRadius = s.cornerRadius,
+                corners = s.corners,
+                opacity = s.opacity,
+                blendMode = s.blendMode,
+                fill = primary != null && primary.kind == "solid" ? primary.color : null,
+                gradient = primary != null && primary.kind == "gradient" ? primary : null,
+                fills = s.fills,
+                stroke = s.stroke,
+                strokes = s.strokes,
+                effects = s.effects,
+            };
         }
 
         // Apply a captured Figma drop shadow to the SDF graphic. Figma offset is +y
