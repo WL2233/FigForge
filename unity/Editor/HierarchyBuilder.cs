@@ -639,8 +639,8 @@ namespace FigForge
             if (!hasAsset && !ctx.vanilla && UseSdf(style)) { BuildSdfPanel(go, e, ctx); return; }
             if (!hasAsset && ctx.vanilla && UseSdf(style))
             {
-                var vanillaImg = AddVanillaShapeGraphic(go, VanillaShape(style), ctx);
-                if (vanillaImg != null) vanillaImg.raycastTarget = !ctx.disableRaycasts;
+                var img = AddVanillaShapeGraphic(go, VanillaShape(style), ctx);
+                if (img != null) img.raycastTarget = !ctx.disableRaycasts;
                 if (style?.effects != null)
                     AddVanillaDropShadows(go, style.effects,
                         style.cornerRadius > 0.01f ? Mathf.RoundToInt(style.cornerRadius * ctx.scaleFactor) : 0, ctx);
