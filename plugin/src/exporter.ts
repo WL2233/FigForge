@@ -1091,6 +1091,21 @@ export async function exportDesign(
   const failedExportIds = new Set<string>();
 
   const exportPlans = plans.filter((p) => p.exportable || p.bakeSelf);
+  // Index exportable descendants once. The old export loop scanned every plan for
+  // every PNG, making dense exports approach O(exportPlans * plans * treeDepth).
+  const exportableDescendantsByPlan = new Map<string, SceneNode[]>();
+  for (const child of plans) {
+    if (!child.exportable) continue;
+    let parent = (child.node as unknown as { parent?: BaseNode | null }).parent;
+    while (parent) {
+      if (planById.has(parent.id)) {
+        const descendants = exportableDescendantsByPlan.get(parent.id) || [];
+        descendants.push(child.node);
+        exportableDescendantsByPlan.set(parent.id, descendants);
+      }
+      parent = (parent as unknown as { parent?: BaseNode | null }).parent;
+    }
+  }
   let done = 0;
 
   // Config-excluded nodes never become plans (plan() returns early), but Figma
@@ -1102,6 +1117,18 @@ export async function exportDesign(
   for (const id of excludedIds) {
     const n = (await figma.getNodeByIdAsync(id)) as SceneNode | null;
     if (n && isDescendant(n, root)) excludedNodes.push(n);
+  }
+  const excludedDescendantsByPlan = new Map<string, SceneNode[]>();
+  for (const excluded of excludedNodes) {
+    let parent = (excluded as unknown as { parent?: BaseNode | null }).parent;
+    while (parent) {
+      if (planById.has(parent.id)) {
+        const descendants = excludedDescendantsByPlan.get(parent.id) || [];
+        descendants.push(excluded);
+        excludedDescendantsByPlan.set(parent.id, descendants);
+      }
+      parent = (parent as unknown as { parent?: BaseNode | null }).parent;
+    }
   }
 
   for (const p of exportPlans) {
@@ -1125,12 +1152,9 @@ export async function exportDesign(
         if ((c as unknown as { visible?: boolean }).visible !== false) hidden.push(c);
       }
     } else if (!p.merged) {
-      for (const other of plans) {
-        if (other === p || !other.exportable) continue;
-        if (isDescendant(other.node, p.node)) {
-          if ((other.node as unknown as { visible?: boolean }).visible !== false) {
-            hidden.push(other.node);
-          }
+      for (const descendant of exportableDescendantsByPlan.get(p.node.id) || []) {
+        if ((descendant as unknown as { visible?: boolean }).visible !== false) {
+          hidden.push(descendant);
         }
       }
     }
@@ -1141,11 +1165,12 @@ export async function exportDesign(
     // dedup guards the bakeSelf overlap (an excluded direct child is already
     // in `hidden`); a duplicate entry would record before=false in `restore`
     // and leave the node hidden in the document afterwards.
-    for (const ex of excludedNodes) {
+    const hiddenIds = new Set(hidden.map((node) => node.id));
+    for (const ex of excludedDescendantsByPlan.get(p.node.id) || []) {
       if ((ex as unknown as { visible?: boolean }).visible !== false
-        && isDescendant(ex, p.node)
-        && !hidden.includes(ex)) {
+        && !hiddenIds.has(ex.id)) {
         hidden.push(ex);
+        hiddenIds.add(ex.id);
       }
     }
     const restore = hidden.map((n) => {

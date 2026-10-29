@@ -254,18 +254,25 @@ const PASSTHROUGH_TYPES = new Set([...CONTAINER_TYPES, 'SECTION']);
  * single sprite — dissolving them would scatter the glyph). The export root is
  * filtered separately by the exporter (no parent to promote into).
  */
-export async function canPassthrough(node: SceneNode): Promise<boolean> {
+export async function canPassthrough(node: SceneNode, canonical?: CanonicalRef | null): Promise<boolean> {
   if (!PASSTHROUGH_TYPES.has(node.type) || !hasChildren(node)) return false;
   if (!node.children.some(isVisible)) return false;
-  if (await detectCanonical(node)) return false;
+  if (canonical === undefined) canonical = await detectCanonical(node);
+  if (canonical) return false;
   if (isIconContainer(node)) return false;
   return true;
 }
 
 /** Build the UI layer tree for a selected root node. */
-export async function buildTree(root: SceneNode, excluded: Set<string>): Promise<TreeNode> {
+export async function buildTree(
+  root: SceneNode,
+  excluded: Set<string>,
+  shouldContinue: () => boolean = () => true,
+): Promise<TreeNode> {
   async function walk(node: SceneNode, depth: number): Promise<TreeNode> {
+    if (!shouldContinue()) throw new Error('Tree build superseded');
     const canonical = await detectCanonical(node);
+    if (!shouldContinue()) throw new Error('Tree build superseded');
     const childNodes: TreeNode[] =
       hasChildren(node) && !isIconContainer(node)
         ? await Promise.all(node.children.map((c) => walk(c, depth + 1)))
@@ -279,7 +286,7 @@ export async function buildTree(root: SceneNode, excluded: Set<string>): Promise
       visible: isVisible(node) && !excluded.has(node.id),
       canExportPng: node.type === 'TEXT' || isExportable(node),
       canMerge: canMerge(node),
-      canPassthrough: depth > 0 && await canPassthrough(node),
+      canPassthrough: depth > 0 && await canPassthrough(node, canonical),
       passthroughByName: isPassthroughName(node.name),
       canonicalRef: canonical ? canonical.ref : undefined,
       children: childNodes,

@@ -23,13 +23,6 @@ const WINDOW_PRESETS: Record<string, { w: number; h: number }> = {
 
 figma.showUI(__html__, { width: WINDOW_PRESETS.M.w, height: WINDOW_PRESETS.M.h, themeColors: true });
 
-// Under manifest "documentAccess": "dynamic-page", reading a non-current page's
-// .children / findAll throws unless its pages are loaded first. We load every
-// page once at startup and gate the message handler
-// on that promise. (Loading does NOT make figma.getNodeById legal — those call
-// sites use getNodeByIdAsync.)
-const pagesLoaded: Promise<void> = figma.loadAllPagesAsync();
-
 // Per-session UI state we need to remember between messages.
 const excluded = new Set<string>();
 const merged = new Set<string>();
@@ -69,7 +62,7 @@ async function pushSelection() {
       return;
     }
     const trees = [];
-    for (const root of roots) trees.push(await buildTree(root, excluded));
+    for (const root of roots) trees.push(await buildTree(root, excluded, () => token === pushSelectionToken));
     if (token !== pushSelectionToken) return; // superseded by a newer pushSelection
     const root = roots[0];
     const size = {
@@ -92,7 +85,14 @@ async function pushSelection() {
   }
 }
 
-figma.on('selectionchange', () => { void pushSelection(); });
+let selectionTimer: number | undefined;
+figma.on('selectionchange', () => {
+  if (selectionTimer !== undefined) clearTimeout(selectionTimer);
+  selectionTimer = setTimeout(() => {
+    selectionTimer = undefined;
+    void pushSelection();
+  }, 150);
+});
 void pushSelection();
 
 // One export at a time. exportDesign isolates layers by MUTATING node.visible
@@ -126,8 +126,6 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
     }
     return;
   }
-  // Wait for every page to load before handling document messages.
-  await pagesLoaded;
   switch (msg.type) {
     case 'add-selection':
       if (exportInFlight) break;
@@ -196,7 +194,7 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
     }
 
     case 'preview-element':
-      await sendPreview(msg.nodeId as string);
+      queuePreview(msg.nodeId as string);
       break;
 
     case 'export': {
@@ -266,13 +264,43 @@ function applyConfigs(configs: ElementConfig[] | undefined) {
   }
 }
 
+let pendingPreviewId: string | null = null;
+let previewRunning = false;
+
+function queuePreview(nodeId: string): void {
+  pendingPreviewId = nodeId;
+  if (!previewRunning) void drainPreviewQueue();
+}
+
+async function drainPreviewQueue(): Promise<void> {
+  previewRunning = true;
+  try {
+    while (pendingPreviewId) {
+      const nodeId = pendingPreviewId;
+      pendingPreviewId = null;
+      await sendPreview(nodeId);
+    }
+  } finally {
+    previewRunning = false;
+  }
+}
+
 async function sendPreview(nodeId: string) {
   const node = await figma.getNodeByIdAsync(nodeId) as SceneNode | null;
   if (!node || !('exportAsync' in node)) return;
   try {
+    const width = (node as unknown as { width?: number }).width ?? 0;
+    const height = (node as unknown as { height?: number }).height ?? 0;
+    const maxSide = 512;
+    const constraint: ExportSettingsImage['constraint'] = Math.max(width, height) <= maxSide
+      ? { type: 'SCALE', value: 1 }
+      : width >= height
+        ? { type: 'WIDTH', value: maxSide }
+        : { type: 'HEIGHT', value: maxSide };
     const bytes = await (node as unknown as {
       exportAsync: (s: ExportSettings) => Promise<Uint8Array>;
-    }).exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 1 } });
+    }).exportAsync({ format: 'PNG', constraint });
+    if (pendingPreviewId && pendingPreviewId !== nodeId) return;
     figma.ui.postMessage({
       type: 'element-preview',
       nodeId,

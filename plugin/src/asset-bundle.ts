@@ -61,7 +61,9 @@ export class AssetBundle {
   async manifest(json: string, assets: BinaryAsset[], prefix = ''): Promise<string> {
     const paths = new Map<string, string>();
     for (const asset of assets) {
-      const bytes = new Uint8Array(asset.data);
+      // BinaryAsset already owns a Uint8Array; retaining it avoids duplicating every
+      // PNG while the original frames, bundle and JSZip are alive simultaneously.
+      const bytes = asset.data;
       const signature = [137, 80, 78, 71, 13, 10, 26, 10];
       if (bytes.length < 24 || !signature.every((b, i) => bytes[i] === b) ||
           String.fromCharCode(...bytes.slice(12, 16)) !== 'IHDR') {
