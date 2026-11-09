@@ -1,0 +1,11 @@
+{
+  "name": "com.tools.batch-replace-font-material-preset",
+  "displayName": "批量替换字体的 Material Preset",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "Batch replaces TextMeshPro Material Presets in prefabs under a selected project folder.",
+  "keywords": ["textmeshpro", "font", "material-preset", "prefab", "editor"],
+  "dependencies": {
+    "com.unity.textmeshpro": "3.0.6"
+  }
+}

@@ -46,8 +46,10 @@ try {
 
     $plugin = Join-Path $root 'plugin'
     $unity = Join-Path $root 'unity'
+    $materialPresetTool = Join-Path $root '批量替换字体的Material Preset'
     $pluginVersion = Read-Version (Join-Path $plugin 'package.json')
     $unityVersion = Read-Version (Join-Path $unity 'package.json')
+    $materialPresetToolVersion = Read-Version (Join-Path $materialPresetTool 'package.json')
     Require-File (Join-Path $plugin 'package-lock.json')
     $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $npm = (Get-Command npm.cmd -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -112,20 +114,43 @@ try {
         $unityFiles += Get-Item -LiteralPath $path
     }
 
-    # Validate both inputs before producing either archive.
+    # Standalone TextMeshPro Material Preset replacement package.
+    $materialPresetToolFiles = @()
+    $materialPresetToolEditor = Join-Path $materialPresetTool 'Editor'
+    if (-not (Test-Path -LiteralPath $materialPresetToolEditor -PathType Container)) {
+        throw "Missing package directory: $materialPresetToolEditor"
+    }
+    $materialPresetToolFiles += @(Get-ChildItem -LiteralPath $materialPresetToolEditor -File -Recurse)
+    Require-File (Join-Path $materialPresetTool 'Editor.meta')
+    $materialPresetToolFiles += Get-Item -LiteralPath (Join-Path $materialPresetTool 'Editor.meta')
+    foreach ($name in @('package.json', 'package.json.meta', 'README.md', 'README.md.meta')) {
+        $path = Join-Path $materialPresetTool $name
+        Require-File $path
+        $materialPresetToolFiles += Get-Item -LiteralPath $path
+    }
+
+    # Validate all inputs before producing any archive.
     $output = Join-Path $root 'dist'
     New-Item -ItemType Directory -Path $output -Force | Out-Null
     $pluginZip = Join-Path $output "figforge-plugin-$pluginVersion.zip"
     $unityZip = Join-Path $output "figforge-unity-importer-$unityVersion.zip"
-    $temporaryFiles = @((Join-Path $output "$([guid]::NewGuid()).tmp"), (Join-Path $output "$([guid]::NewGuid()).tmp"))
+    $materialPresetToolZip = Join-Path $output "batch-replace-font-material-preset-$materialPresetToolVersion.zip"
+    $temporaryFiles = @(
+        (Join-Path $output "$([guid]::NewGuid()).tmp"),
+        (Join-Path $output "$([guid]::NewGuid()).tmp"),
+        (Join-Path $output "$([guid]::NewGuid()).tmp"))
     Write-Archive $temporaryFiles[0] $plugin 'figforge-plugin' $pluginFiles
     Write-Archive $temporaryFiles[1] $unity 'figforge-unity-importer' $unityFiles
+    Write-Archive $temporaryFiles[2] $materialPresetTool '批量替换字体的Material Preset' $materialPresetToolFiles
     Move-Item -LiteralPath $temporaryFiles[0] -Destination $pluginZip -Force
     Move-Item -LiteralPath $temporaryFiles[1] -Destination $unityZip -Force
+    Move-Item -LiteralPath $temporaryFiles[2] -Destination $materialPresetToolZip -Force
     Write-Host "Created: $pluginZip"
     Write-Host "Created: $unityZip"
+    Write-Host "Created: $materialPresetToolZip"
     Write-Host 'Figma: unzip, then import figforge-plugin/manifest.json as a development plugin.'
     Write-Host 'Unity: unzip, then Add package from disk using figforge-unity-importer/package.json.'
+    Write-Host 'Material Preset tool: unzip, then Add package from disk using 批量替换字体的Material Preset/package.json.'
     exit 0
 } catch {
     Write-Host "Packaging failed: $($_.Exception.Message)" -ForegroundColor Red
