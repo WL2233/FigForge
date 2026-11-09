@@ -25,6 +25,7 @@ namespace FigForge
         public float exportScale = 1f;
         public Dictionary<string, Sprite> sprites = new Dictionary<string, Sprite>();
         public Func<string, string, TMP_FontAsset> resolveFont;
+        public Material fontMaterialPreset;
         // Vanilla import (manifest.vanilla): render everything from baked sprites —
         // no SDF/vector/layered shaders, no page compositor. The plugin bakes a PNG
         // onto every shape, so this only governs the assetless fallback (plain Image
@@ -1031,6 +1032,7 @@ namespace FigForge
 
             var font = ctx.resolveFont?.Invoke(t.fontFamily, t.fontStyle);
             if (font != null) tmp.font = font;
+            ApplyFontMaterialPreset(tmp, ctx);
             tmp.fontStyle = FauxStyle(t.fontStyle, font); // synthesize bold/italic if the real weight isn't available
 
             tmp.alignment = MapAlign(t.alignH, t.alignV);
@@ -4025,7 +4027,14 @@ namespace FigForge
             string sty = lf != null && !string.IsNullOrEmpty(lf.style) ? lf.style : "Regular";
             var font = ctx.resolveFont?.Invoke(fam, sty);
             if (font != null) label.font = font;
+            ApplyFontMaterialPreset(label, ctx);
             label.fontStyle = FauxStyle(sty, font);
+        }
+
+        static void ApplyFontMaterialPreset(TMP_Text label, BuildContext ctx)
+        {
+            if (label != null && ctx != null && ctx.fontMaterialPreset != null)
+                label.fontSharedMaterial = ctx.fontMaterialPreset;
         }
 
         static void ApplyFontSize(TMP_Text label, float figmaPx, BuildContext ctx)

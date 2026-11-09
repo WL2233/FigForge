@@ -58,6 +58,8 @@ namespace FigForge
         // font mapping: "family|style" → TMP asset
         readonly Dictionary<string, TMP_FontAsset> _fontMap = new Dictionary<string, TMP_FontAsset>();
         List<TMP_FontAsset> _projectFonts = new List<TMP_FontAsset>();
+        const string DefaultFontMaterialPresetName = "Alimama_FangYuanTiVF_Material_Outline2A1F1E";
+        Material _fontMaterialPreset;
 
         // ---- ui state ----
         Vector2 _scroll, _logScroll;
@@ -98,6 +100,7 @@ namespace FigForge
             public string prefabFolder = DefaultPrefabFolder;
             public TextureImportSettings tex = new TextureImportSettings();
             public Dictionary<string, string> fonts = new Dictionary<string, string>();
+            public string fontMaterialPreset;
         }
 
         static string ObjectId(Object value) => value == null ? null : GlobalObjectId.GetGlobalObjectIdSlow(value).ToString();
@@ -121,6 +124,7 @@ namespace FigForge
                     prefabFolder = _prefabFolder,
                     tex = _tex,
                     fonts = _fontMap.ToDictionary(pair => pair.Key, pair => ObjectId(pair.Value)),
+                    fontMaterialPreset = ObjectId(_fontMaterialPreset),
                 };
                 EditorPrefs.SetString(SettingsKey, JsonConvert.SerializeObject(settings));
                 if (notify) ShowNotification(new GUIContent("当前设置已保存"));
@@ -170,6 +174,8 @@ namespace FigForge
                     var font = ResolveObject<TMP_FontAsset>(pair.Value);
                     if (font != null) _fontMap[pair.Key] = font;
                 }
+            _fontMaterialPreset = ResolveObject<Material>(settings.fontMaterialPreset);
+            if (_fontMaterialPreset == null) _fontMaterialPreset = FindDefaultFontMaterialPreset();
             if (_manifest != null) BuildFontKeys();
         }
 
@@ -270,6 +276,14 @@ namespace FigForge
             _projectFonts = AssetDatabase.FindAssets("t:TMP_FontAsset")
                 .Select(g => AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(AssetDatabase.GUIDToAssetPath(g)))
                 .Where(f => f != null).ToList();
+            if (_fontMaterialPreset == null) _fontMaterialPreset = FindDefaultFontMaterialPreset();
+        }
+
+        static Material FindDefaultFontMaterialPreset()
+        {
+            return AssetDatabase.FindAssets($"{DefaultFontMaterialPresetName} t:Material")
+                .Select(g => AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(g)))
+                .FirstOrDefault(m => m != null && m.name == DefaultFontMaterialPresetName);
         }
 
         void BuildFontKeys()
@@ -563,6 +577,8 @@ namespace FigForge
                 if (!_showFonts) return;
                 using (new EditorGUI.IndentLevelScope())
                 {
+                    _fontMaterialPreset = (Material)EditorGUILayout.ObjectField(
+                        "Material Preset", _fontMaterialPreset, typeof(Material), false);
                     if (_projectFonts.Count == 0)
                         EditorGUILayout.HelpBox("No TMP_FontAsset found. Create font assets (Window > TextMeshPro > Font Asset Creator).", MessageType.Warning);
                     foreach (var f in _manifest.fonts)
@@ -687,6 +703,7 @@ namespace FigForge
                 // Always use the shader-free rendering path before the final component pass.
                 vanilla = true,
                 resolveFont = ResolveFontAsset,
+                fontMaterialPreset = _fontMaterialPreset,
                 log = mm => Log(mm, MessageType.Warning),
             };
         }
