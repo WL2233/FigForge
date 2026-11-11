@@ -70,9 +70,7 @@ namespace FigForge
 
                 if (parsed)
                 {
-                    var figForgeToggle = toggle as FigForgeToggle;
-                    if (figForgeToggle != null) figForgeToggle.isOn = on;
-                    else toggle.isOn = on;
+                    toggle.isOn = on;
                 }
             }
 

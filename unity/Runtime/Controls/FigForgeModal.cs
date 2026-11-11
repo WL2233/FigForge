@@ -390,13 +390,8 @@ namespace FigForge
         static void SetButtonLabel(Button button, string label)
         {
             if (button == null || label == null) return;
-            var fig = button as FigForgeButton;
-            if (fig != null) fig.Label = label;
-            else
-            {
-                var tmp = button.GetComponentInChildren<TMP_Text>(true);
-                if (tmp != null) tmp.text = label;
-            }
+            var tmp = button.GetComponentInChildren<TMP_Text>(true);
+            if (tmp != null) tmp.text = label;
         }
     }
 }

@@ -1,5 +1,4 @@
 using System;
-using TMPro;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
@@ -17,33 +16,9 @@ namespace FigForge
         {
             if (root == null) throw new ArgumentNullException(nameof(root));
 
-            Replace<FigForgeSwitch, Toggle>(root);
-            Replace<FigForgeToggle, Toggle>(root);
-            Replace<FigForgeButton, Button>(root);
-            Replace<FigForgeSlider, Slider>(root);
-            Replace<FigForgeScrollRect, ScrollRect>(root);
-            Replace<FigForgeInputField, TMP_InputField>(root);
-            Replace<FigForgeDropdown, TMP_Dropdown>(root);
-
             ReplaceCustomGraphics(root);
             RemoveFigForgeBehaviours(root);
             EnsureNativeOnly(root);
-        }
-
-        static void Replace<TSource, TTarget>(GameObject root)
-            where TSource : Component
-            where TTarget : Component
-        {
-            foreach (var source in root.GetComponentsInChildren<TSource>(true))
-            {
-                if (source == null) continue;
-                var go = source.gameObject;
-                var json = EditorJsonUtility.ToJson(source);
-                UnityEngine.Object.DestroyImmediate(source);
-                var target = go.AddComponent<TTarget>();
-                EditorJsonUtility.FromJsonOverwrite(json, target);
-                EditorUtility.SetDirty(target);
-            }
         }
 
         static void ReplaceCustomGraphics(GameObject root)

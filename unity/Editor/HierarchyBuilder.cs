@@ -1177,7 +1177,7 @@ namespace FigForge
             var pressGo = AddSpriteStateChild(go.transform, "Pressed", pr, false, ctx);
             var hit = AddHitArea(go.transform, e.canonical.parts);
 
-            var btn = go.AddComponent<FigForgeButton>();
+            var btn = go.AddComponent<Button>();
             btn.targetGraphic = hit;
             btn.transition = Selectable.Transition.None;
 
@@ -1198,7 +1198,6 @@ namespace FigForge
             // The prefab/definition mirrors the canonical COMPONENT's label font.
             ApplyFont(tmp, e.canonical != null ? e.canonical.defLabelFont : null, ctx);
             MatchTextWeight(tmp);
-            btn.tmpTxt_label = tmp;
             var icon = AddControlIcon(go, e.canonical, ctx);
             var bind = go.AddComponent<FigForgeBindings>();
             bind.control = btn; bind.label = tmp; bind.icon = icon;
@@ -1231,7 +1230,7 @@ namespace FigForge
             var pressGo = AddShapeStateChild(go.transform, "Pressed", pressShape, e.canonical.parts, ctx, false);
             var hit = AddHitArea(go.transform, e.canonical.parts);
 
-            var btn = go.AddComponent<FigForgeButton>();
+            var btn = go.AddComponent<Button>();
             btn.targetGraphic = hit;
             btn.transition = Selectable.Transition.None;
 
@@ -1251,7 +1250,6 @@ namespace FigForge
             ConfigureButtonLabelText(tmp);
             ApplyFont(tmp, e.canonical.defLabelFont, ctx);
             MatchTextWeight(tmp);
-            btn.tmpTxt_label = tmp;
             var icon = AddControlIcon(go, e.canonical, ctx);
             var bind = go.AddComponent<FigForgeBindings>();
             bind.control = btn; bind.label = tmp; bind.icon = icon;
@@ -2331,7 +2329,7 @@ namespace FigForge
         {
             var c = e.canonical;
             var go = NewRect(ObjectName(e, "Toggle"), parent);
-            var toggle = go.AddComponent<FigForgeToggle>();
+            var toggle = go.AddComponent<Toggle>();
             toggle.transition = Selectable.Transition.None;
 
             // Background — full render-only Figma subtree when captured, else the flat
@@ -2406,8 +2404,6 @@ namespace FigForge
             // doesn't bake one instance's "on" and clobber its group-mates.
             toggle.isOn = false;
 
-            toggle.tmpTxt_label = label;
-            toggle.checkmark = toggle.graphic; // null for a composite checkmark (driven by FigForgeToggleGraphicObject)
             var icon = AddControlIcon(go, c, ctx);
 
             var bind = go.AddComponent<FigForgeBindings>();
@@ -2416,13 +2412,13 @@ namespace FigForge
         }
 
         // Switch: Toggle plumbing with slider-like Track/Fill/Thumb visuals. The Fill
-        // object is shown only when on; FigForgeSwitch slides the Thumb between ends.
+        // object is shown only when on; Toggle slides the Thumb between ends.
         static GameObject BuildSwitch(ElementData e, Transform parent, BuildContext ctx)
         {
             var c = e.canonical;
             float sf = ctx.scaleFactor;
             var go = NewRect(ObjectName(e, "Switch"), parent);
-            var sw = go.AddComponent<FigForgeSwitch>();
+            var sw = go.AddComponent<Toggle>();
             sw.transition = Selectable.Transition.None;
 
             float[] full = { 0f, 0f, 1f, 1f };
@@ -2479,12 +2475,8 @@ namespace FigForge
 
             var hit = AddHitArea(go.transform, c.parts);
             sw.targetGraphic = hit;
-            sw.fillGraphic = fill;
-            sw.thumb = hrt;
-            sw.tmpTxt_label = label;
-            sw.checkmark = fill;
+            sw.graphic = fill;
             sw.isOn = false;
-            if (fill != null) fill.gameObject.SetActive(false);
             var icon = AddControlIcon(go, c, ctx);
 
             var bind = go.AddComponent<FigForgeBindings>();
@@ -2498,7 +2490,7 @@ namespace FigForge
             var c = e.canonical;
             float sf = ctx.scaleFactor;
             var go = NewRect(ObjectName(e, "InputField"), parent);
-            var input = go.AddComponent<FigForgeInputField>();
+            var input = go.AddComponent<TMP_InputField>();
             input.transition = Selectable.Transition.None;
             input.lineType = TMP_InputField.LineType.SingleLine;
             input.contentType = TMP_InputField.ContentType.Standard;
@@ -2593,7 +2585,7 @@ namespace FigForge
 
             var inputGo = NewRect("InputField", go.transform);
             AnchorPart(inputGo.GetComponent<RectTransform>(), c.parts, "InputField");
-            var input = inputGo.AddComponent<FigForgeInputField>();
+            var input = inputGo.AddComponent<TMP_InputField>();
             input.transition = Selectable.Transition.None;
             input.lineType = TMP_InputField.LineType.SingleLine;
             input.contentType = TMP_InputField.ContentType.DecimalNumber;
@@ -2661,7 +2653,7 @@ namespace FigForge
         {
             var c = e.canonical;
             var go = NewRect(ObjectName(e, "Dropdown"), parent);
-            var dd = go.AddComponent<FigForgeDropdown>();
+            var dd = go.AddComponent<TMP_Dropdown>();
             dd.transition = Selectable.Transition.None;
 
             var bgGo = NewRect("Background", go.transform);
@@ -2920,14 +2912,14 @@ namespace FigForge
 
         // Shared scroll scaffolding for the List/Table canonicals: rounded container
         // Background (subtree or flat shape), optional Header subtree pinned to the
-        // top, FigForgeScrollRect with a designer-defined (Mask layer) or derived
+        // top, ScrollRect with a designer-defined (Mask layer) or derived
         // clip viewport, vertical-layout Content, and the styled overlay Scrollbar
         // that auto-hides when the rows fit the viewport.
         sealed class ScrollShell
         {
             public GameObject go;
             public Graphic bg;
-            public FigForgeScrollRect scroll;
+            public ScrollRect scroll;
             public RectTransform viewport;
             public RectTransform content;
             public GameObject scrollbarGo;
@@ -2936,7 +2928,7 @@ namespace FigForge
             public bool hasMaskPart;
 
             // Viewport height for the EDIT-mode initial scrollbar visibility check
-            // (the AutoHide + tolerance logic in FigForgeScrollRect.LateUpdate only
+            // (the AutoHide + tolerance logic in ScrollRect.LateUpdate only
             // runs in play mode).
             public float ViewportHeight(ElementData e, float sf)
             {
@@ -2980,10 +2972,10 @@ namespace FigForge
                 BuildPartSubtree(headerGo, c.partTrees["Header"], ctx);
             }
 
-            // FigForgeScrollRect: stock wheel input bypasses the drag rubber-band and
+            // ScrollRect: stock wheel input bypasses the drag rubber-band and
             // overshoots Elastic bounds violently — it clamps wheel movement to the range
             // (hard stop, like the thumb) while drags keep the elastic bounce.
-            var scroll = go.AddComponent<FigForgeScrollRect>();
+            var scroll = go.AddComponent<ScrollRect>();
             scroll.horizontal = false; scroll.vertical = true;
             scroll.movementType = ScrollRect.MovementType.Elastic; scroll.scrollSensitivity = 20f;
 
@@ -3359,7 +3351,7 @@ namespace FigForge
             // Build exactly the action buttons the designer drew (1–3), in left→right
             // order. Roles: the emphasized one → primary; the rest, in order → secondary,
             // tertiary. Falls back to Secondary+Primary for legacy manifests with no actions.
-            FigForgeButton primary = null, secondary = null, tertiary = null;
+            Button primary = null, secondary = null, tertiary = null;
             if (c.actions != null && c.actions.Count > 0)
             {
                 foreach (var a in c.actions)
@@ -3410,7 +3402,7 @@ namespace FigForge
             return go;
         }
 
-        static FigForgeButton AddModalButton(Transform parent, string name, string label, bool primary, BuildContext ctx)
+        static Button AddModalButton(Transform parent, string name, string label, bool primary, BuildContext ctx)
         {
             float sf = ctx.scaleFactor;
             var go = NewRect(name, parent);
@@ -3424,7 +3416,7 @@ namespace FigForge
             img.color = primary ? new Color(0.28f, 0.22f, 0.9f, 1f) : new Color(0.92f, 0.93f, 0.96f, 1f);
             img.raycastTarget = true;
 
-            var btn = go.AddComponent<FigForgeButton>();
+            var btn = go.AddComponent<Button>();
             btn.transition = Selectable.Transition.ColorTint;
             btn.targetGraphic = img;
 
@@ -3437,7 +3429,6 @@ namespace FigForge
             tmp.color = primary ? Color.white : new Color(0.12f, 0.12f, 0.16f, 1f);
             tmp.raycastTarget = false;
             ApplyFont(tmp, null, ctx);
-            btn.tmpTxt_label = tmp;
             return btn;
         }
 
@@ -3619,7 +3610,7 @@ namespace FigForge
             var c = e.canonical;
             float sf = ctx.scaleFactor;
             var go = NewRect(ObjectName(e, "Slider"), parent);
-            var slider = go.AddComponent<FigForgeSlider>();
+            var slider = go.AddComponent<Slider>();
             slider.transition = Selectable.Transition.None;
             slider.direction = Slider.Direction.LeftToRight;
             // Authored value range from the Figma component (the canonical tag);
@@ -3628,7 +3619,6 @@ namespace FigForge
             slider.minValue = hasRange ? c.minValue : 0f;
             slider.maxValue = hasRange ? c.maxValue : 1f;
             slider.wholeNumbers = false; // slot snapping (below) covers discrete sliders
-            slider.Slots = c.slots >= 2 ? c.slots : 0;
 
             float[] full = { 0f, 0f, 1f, 1f };
             float[] trackBox = c.parts != null && c.parts.TryGetValue("Track", out var tb) && tb != null && tb.Length >= 4 ? tb : full;
@@ -3728,7 +3718,7 @@ namespace FigForge
                 lrt.anchorMax = new Vector2(1f, lrt.anchorMax.y);
             }
 
-            // Live value read-out — the captured 'Value' layer. FigForgeSlider rewrites
+            // Live value read-out — the captured 'Value' layer. Slider rewrites
             // the text on every value change; right-aligned, with the box extended to
             // the control's LEFT edge so longer values ('0.875') never clip (the
             // captured box hugs the short authored preview).
@@ -3736,7 +3726,7 @@ namespace FigForge
             if (c.parts != null && c.parts.ContainsKey("Value"))
             {
                 // Initial text formatted like the runtime default (whole numbers) so the
-                // prefab preview matches what FigForgeSlider will render.
+                // prefab preview matches what Slider will render.
                 string initialReadout = float.TryParse(c.value, System.Globalization.NumberStyles.Float,
                         System.Globalization.CultureInfo.InvariantCulture, out var iv)
                     ? iv.ToString("0", System.Globalization.CultureInfo.InvariantCulture)
@@ -3752,8 +3742,6 @@ namespace FigForge
             // POSITION against the slide area, so the hit graphic only routes events.
             var hit = AddHitArea(go.transform, c.parts);
             slider.targetGraphic = hit;
-            slider.tmpTxt_label = label;
-            slider.tmpTxt_value = valueText;
 
             // Leave value at the default (0): FigForgeBindings.Apply sets the
             // per-instance initial value, so the shared prefab doesn't bake one
@@ -3921,8 +3909,6 @@ namespace FigForge
                 }
             }
 
-            bar.tmpTxt_label = label;
-            bar.tmpTxt_value = valueText;
 
             // Leave value at the default (0): FigForgeBindings.Apply sets the
             // per-instance initial value, so the shared prefab doesn't bake one
@@ -3961,7 +3947,7 @@ namespace FigForge
             var go = NewRect(ObjectName(e, "Button"), parent);
             var img = go.AddComponent<Image>();
             img.color = new Color(0.45f, 0.36f, 1f, 1f);
-            var btn = go.AddComponent<FigForgeButton>();
+            var btn = go.AddComponent<Button>();
             var label = NewRect("Label", go.transform);
             Stretch(label.GetComponent<RectTransform>());
             var tmp = label.AddComponent<TextMeshProUGUI>();
@@ -3970,7 +3956,6 @@ namespace FigForge
             tmp.color = Color.white;
             ApplyFontSize(tmp, e.canonical?.defLabelFontSize ?? 16f, ctx);
             ConfigureButtonLabelText(tmp);
-            btn.tmpTxt_label = tmp;
             return go;
         }
 
