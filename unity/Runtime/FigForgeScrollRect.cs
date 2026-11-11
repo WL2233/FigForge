@@ -16,7 +16,7 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Scroll Rect")]
+    [AddComponentMenu("")]
     public class FigForgeScrollRect : ScrollRect
     {
         [Tooltip("Hide the vertical scrollbar when the content overflows the viewport by no " +

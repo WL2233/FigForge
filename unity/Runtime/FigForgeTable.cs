@@ -13,7 +13,7 @@ using UnityEngine.UI;
 namespace FigForge
 {
     [DisallowMultipleComponent]
-    [AddComponentMenu("FigForge/Table")]
+    [AddComponentMenu("")]
     public class FigForgeTable : MonoBehaviour
     {
         public RectTransform content;

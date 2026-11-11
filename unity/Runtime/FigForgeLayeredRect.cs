@@ -201,7 +201,7 @@ namespace FigForge
     }
 
     [RequireComponent(typeof(CanvasRenderer))]
-    [AddComponentMenu("FigForge/Layered Rect")]
+    [AddComponentMenu("")]
     public class FigForgeLayeredRect : MaskableGraphic, IFigForgeCompositorSource
     {
         const float MaxCachedSurfaceScale = 16f;

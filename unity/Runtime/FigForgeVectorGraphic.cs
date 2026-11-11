@@ -23,7 +23,7 @@ using UnityEngine.UI;
 namespace FigForge
 {
     [RequireComponent(typeof(CanvasRenderer))]
-    [AddComponentMenu("FigForge/FigForge Vector Graphic")]
+    [AddComponentMenu("")]
     public class FigForgeVectorGraphic : MaskableGraphic, IFigForgeCompositorSource
     {
         [SerializeField] Vector2 _bounds = Vector2.one;          // node px (w,h) the verts live in

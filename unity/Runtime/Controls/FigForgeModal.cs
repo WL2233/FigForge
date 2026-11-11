@@ -37,7 +37,7 @@ namespace FigForge
     }
 
     [DisallowMultipleComponent]
-    [AddComponentMenu("FigForge/Controls/Modal")]
+    [AddComponentMenu("")]
     public class FigForgeModal : MonoBehaviour
     {
         [Header("Parts")]

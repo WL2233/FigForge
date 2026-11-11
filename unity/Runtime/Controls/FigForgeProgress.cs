@@ -28,7 +28,7 @@ using UnityEngine.Events;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Controls/Progress Bar")]
+    [AddComponentMenu("")]
     [DisallowMultipleComponent]
     [RequireComponent(typeof(RectTransform))]
     [ExecuteAlways]

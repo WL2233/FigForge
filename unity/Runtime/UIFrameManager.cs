@@ -17,6 +17,7 @@ namespace FigForge
     // Internal engine: shows one route frame at a time, optionally with its shell.
     // NOT the public API — the generated `UIFrames` class is the entry point and proxies into this.
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     internal class UIFrameManager : MonoBehaviour
     {
         [Tooltip("All pages this manager controls (children with a FigForgeFrame).")]

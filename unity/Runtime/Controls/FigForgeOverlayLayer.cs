@@ -13,6 +13,7 @@ namespace FigForge
 {
     [DisallowMultipleComponent]
     [RequireComponent(typeof(RectTransform))]
+    [AddComponentMenu("")]
     public class FigForgeOverlayLayer : MonoBehaviour
     {
         void Awake()

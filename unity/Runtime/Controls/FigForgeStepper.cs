@@ -10,7 +10,7 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Controls/Stepper")]
+    [AddComponentMenu("")]
     [DisallowMultipleComponent]
     public class FigForgeStepper : MonoBehaviour
     {

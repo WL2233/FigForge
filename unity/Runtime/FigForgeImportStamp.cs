@@ -11,6 +11,7 @@ using UnityEngine;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeImportStamp : MonoBehaviour
     {
         [ReadOnly] public string projectName;

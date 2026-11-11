@@ -40,7 +40,7 @@ namespace FigForge
 {
     [ExecuteAlways]
     [DisallowMultipleComponent]
-    [AddComponentMenu("FigForge/Page Compositor")]
+    [AddComponentMenu("")]
     public class FigForgePageCompositor : MonoBehaviour
     {
         readonly List<IFigForgeCompositorSource> _advancedLayers = new List<IFigForgeCompositorSource>();

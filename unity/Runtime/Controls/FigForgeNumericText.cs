@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Controls/Numeric Text")]
+    [AddComponentMenu("")]
     [DisallowMultipleComponent]
     public class FigForgeNumericText : MonoBehaviour
     {

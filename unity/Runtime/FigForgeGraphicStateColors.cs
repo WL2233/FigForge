@@ -9,7 +9,7 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Graphic State Colors")]
+    [AddComponentMenu("")]
     public class FigForgeGraphicStateColors : MonoBehaviour,
         IPointerEnterHandler, IPointerExitHandler, IPointerDownHandler, IPointerUpHandler
     {

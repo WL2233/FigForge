@@ -16,6 +16,7 @@ using UnityEngine.Events;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeInputField : TMP_InputField
     {
         static readonly Regex NumberPattern = new Regex(

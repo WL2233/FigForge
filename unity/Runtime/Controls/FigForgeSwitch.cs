@@ -9,6 +9,7 @@ using UnityEngine.UI;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeSwitch : FigForgeToggle
     {
         [Tooltip("Graphic shown when the switch is on.")]

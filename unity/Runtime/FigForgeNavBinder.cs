@@ -11,6 +11,7 @@ using UnityEngine.UI;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeNavBinder : MonoBehaviour
     {
         [Tooltip("Target manager. If empty, found in parents / scene at Start.")]

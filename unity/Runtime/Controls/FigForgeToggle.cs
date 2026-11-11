@@ -16,6 +16,7 @@ using UnityEngine.UI;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeToggle : Toggle
     {
         [Tooltip("The toggle's text label (wired by the importer).")]

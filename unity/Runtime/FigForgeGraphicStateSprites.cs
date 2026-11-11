@@ -9,7 +9,7 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Graphic State Sprites")]
+    [AddComponentMenu("")]
     public class FigForgeGraphicStateSprites : MonoBehaviour,
         IPointerEnterHandler, IPointerExitHandler, IPointerDownHandler, IPointerUpHandler
     {

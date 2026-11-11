@@ -14,7 +14,7 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Dropdown Option Edges")]
+    [AddComponentMenu("")]
     public class FigForgeDropdownOptionEdges : MonoBehaviour
     {
         public TMP_Dropdown dropdown;

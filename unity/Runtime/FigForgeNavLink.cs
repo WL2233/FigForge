@@ -9,6 +9,7 @@ using UnityEngine;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeNavLink : MonoBehaviour
     {
         [Tooltip("Destination screen name (from the Figma prototype 'Navigate to' reaction).")]

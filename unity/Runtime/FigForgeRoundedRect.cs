@@ -237,7 +237,7 @@ namespace FigForge
         }
     }
 
-    [AddComponentMenu("FigForge/Rounded Rect")]
+    [AddComponentMenu("")]
     public class FigForgeRoundedRect : MaskableGraphic
     {
         [SerializeField] FigForgeFill fill = FigForgeFill.Solid(Color.white);

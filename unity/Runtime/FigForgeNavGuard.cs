@@ -13,6 +13,7 @@ using UnityEngine;
 
 namespace FigForge
 {
+    [AddComponentMenu("")]
     public abstract class FigForgeNavGuard : MonoBehaviour
     {
         [Tooltip("Screen this guard protects. Empty = the FigForgeFrame on this object or a parent; " +

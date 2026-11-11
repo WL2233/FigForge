@@ -20,6 +20,7 @@ namespace FigForge
     }
 
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeFrameElement : MonoBehaviour
     {
         [SerializeField, ReadOnly, Tooltip("Original Figma container type as an enum for code/Inspector use.")]

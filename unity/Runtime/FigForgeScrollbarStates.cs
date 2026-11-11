@@ -10,7 +10,7 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Scrollbar States")]
+    [AddComponentMenu("")]
     public class FigForgeScrollbarStates : MonoBehaviour,
         IPointerEnterHandler, IPointerExitHandler, IPointerDownHandler, IPointerUpHandler
     {

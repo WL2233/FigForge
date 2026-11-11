@@ -43,7 +43,7 @@ namespace FigForge
     }
 
     [DisallowMultipleComponent]
-    [AddComponentMenu("FigForge/List")]
+    [AddComponentMenu("")]
     public class FigForgeList : MonoBehaviour
     {
         public RectTransform content;

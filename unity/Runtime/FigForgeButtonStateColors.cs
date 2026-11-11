@@ -12,7 +12,7 @@ using UnityEngine.EventSystems;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Button State Colors")]
+    [AddComponentMenu("")]
     public class FigForgeButtonStateColors : MonoBehaviour,
         IPointerEnterHandler, IPointerExitHandler, IPointerDownHandler, IPointerUpHandler
     {

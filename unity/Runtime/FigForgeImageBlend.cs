@@ -34,7 +34,7 @@ namespace FigForge
 {
     [ExecuteAlways]
     [DisallowMultipleComponent]
-    [AddComponentMenu("FigForge/Image Blend")]
+    [AddComponentMenu("")]
     public class FigForgeImageBlend : MonoBehaviour, IFigForgeCompositorSource
     {
         [SerializeField] FigForgeBlendMode blendMode = FigForgeBlendMode.Normal;
@@ -563,6 +563,7 @@ namespace FigForge
     // pre-blended texture with plain premult-over; standalone Tier-1 → the baked
     // surface with fixed-function blend state (Multiply/Screen/PlusLighter).
     [RequireComponent(typeof(CanvasRenderer))]
+    [AddComponentMenu("")]
     internal sealed class FigForgeImageBlendGraphic : MaskableGraphic
     {
         Material _material;

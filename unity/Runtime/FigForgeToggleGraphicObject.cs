@@ -15,7 +15,7 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Toggle Graphic Object")]
+    [AddComponentMenu("")]
     public class FigForgeToggleGraphicObject : MonoBehaviour
     {
         public Toggle toggle;

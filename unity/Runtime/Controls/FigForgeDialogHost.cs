@@ -16,6 +16,7 @@ using UnityEngine;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeDialogHost : MonoBehaviour
     {
         readonly Dictionary<string, FigForgeModal> _byKey = new Dictionary<string, FigForgeModal>();

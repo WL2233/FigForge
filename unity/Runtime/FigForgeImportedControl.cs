@@ -12,5 +12,6 @@ using UnityEngine;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeImportedControl : MonoBehaviour { }
 }

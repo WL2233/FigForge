@@ -11,7 +11,7 @@ using UnityEngine.EventSystems;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Button State Objects")]
+    [AddComponentMenu("")]
     public class FigForgeButtonStateObjects : MonoBehaviour,
         IPointerEnterHandler, IPointerExitHandler, IPointerDownHandler, IPointerUpHandler
     {

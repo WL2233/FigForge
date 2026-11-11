@@ -27,7 +27,7 @@ namespace FigForge
     }
 
     [DisallowMultipleComponent]
-    [AddComponentMenu("FigForge/Controls/Toast Host")]
+    [AddComponentMenu("")]
     public class FigForgeToastHost : MonoBehaviour
     {
         public RectTransform container;
@@ -155,7 +155,7 @@ namespace FigForge
     }
 
     [DisallowMultipleComponent]
-    [AddComponentMenu("FigForge/Controls/Toast Item")]
+    [AddComponentMenu("")]
     public class FigForgeToastItem : MonoBehaviour
     {
         public TMP_Text tmpTxt_title;

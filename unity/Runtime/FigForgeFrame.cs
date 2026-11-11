@@ -9,6 +9,7 @@ using UnityEngine;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeFrame : MonoBehaviour
     {
         [Tooltip("If true this frame is persistent chrome for screens with the same Shell Key. Shell frames can also be shown directly.")]

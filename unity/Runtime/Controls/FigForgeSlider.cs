@@ -23,6 +23,7 @@ using UnityEngine.UI;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeSlider : Slider
     {
         [Tooltip("The slider's text label (wired by the importer). May be null.")]

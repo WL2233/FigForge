@@ -13,6 +13,7 @@ using UnityEngine.Events;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeDropdown : TMP_Dropdown
     {
         /// <summary>The closed-state caption label (TMP_Dropdown.captionText).</summary>

@@ -26,6 +26,7 @@ using UnityEngine.UI;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeButton : Button
     {
         [Tooltip("The button's text label (wired by the importer).")]

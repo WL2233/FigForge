@@ -15,6 +15,7 @@ using UnityEngine.UI;
 namespace FigForge
 {
     [DisallowMultipleComponent]
+    [AddComponentMenu("")]
     public class FigForgeBindings : MonoBehaviour
     {
         [Header("Generic")]

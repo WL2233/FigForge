@@ -10,7 +10,7 @@ using UnityEngine;
 namespace FigForge
 {
     [DisallowMultipleComponent]
-    [AddComponentMenu("FigForge/Canvas Helper")]
+    [AddComponentMenu("")]
     public class FigForgeCanvasHelper : MonoBehaviour
     {
     }

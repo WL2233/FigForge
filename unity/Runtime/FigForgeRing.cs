@@ -16,7 +16,7 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Ring")]
+    [AddComponentMenu("")]
     [DisallowMultipleComponent]
     public class FigForgeRing : MaskableGraphic
     {
