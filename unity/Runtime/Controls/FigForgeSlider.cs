@@ -22,7 +22,6 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Controls/Slider")]
     [DisallowMultipleComponent]
     public class FigForgeSlider : Slider
     {

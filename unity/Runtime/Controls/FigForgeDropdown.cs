@@ -12,7 +12,6 @@ using UnityEngine.Events;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Controls/Dropdown")]
     [DisallowMultipleComponent]
     public class FigForgeDropdown : TMP_Dropdown
     {

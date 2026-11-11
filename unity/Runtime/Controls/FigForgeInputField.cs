@@ -15,7 +15,6 @@ using UnityEngine.Events;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Controls/Input Field")]
     [DisallowMultipleComponent]
     public class FigForgeInputField : TMP_InputField
     {

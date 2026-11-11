@@ -15,7 +15,6 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Controls/Toggle")]
     [DisallowMultipleComponent]
     public class FigForgeToggle : Toggle
     {

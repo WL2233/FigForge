@@ -8,7 +8,6 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Controls/Switch")]
     [DisallowMultipleComponent]
     public class FigForgeSwitch : FigForgeToggle
     {

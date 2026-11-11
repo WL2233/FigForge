@@ -25,7 +25,6 @@ using UnityEngine.UI;
 
 namespace FigForge
 {
-    [AddComponentMenu("FigForge/Controls/Button")]
     [DisallowMultipleComponent]
     public class FigForgeButton : Button
     {
